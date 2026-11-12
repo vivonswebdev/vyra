@@ -1,0 +1,37 @@
+# Manifeste de gel du moteur VYRA v0.2.0 (lot 3, 12/11/2026).
+# Toute modification d'un de ces fichiers fait échouer packages/engine/test/frozen.test.ts.
+# Vérification manuelle depuis la racine du dépôt : grep -v '^#' packages/engine/FROZEN.sha256 | sha256sum -c
+ece660753f1c7e18b031728abc68806ed08848ec9ff8669b7a883a83329957f1  legacy/vyra-studio-0.2/index.html
+16b3a554a184fa76cca21c9f342293d5f33bc4e5961959c72c86c3196785c8b8  legacy/vyra-studio-0.2/motifs/01-chat.png
+364a57b96d76976549b481d8efa8b10229d24cb29a9207d5afceb630ba423c37  legacy/vyra-studio-0.2/motifs/02-fleur.png
+01b2380c386022febb7462cfed7394180e85658b03302180e4969604e3a504ca  legacy/vyra-studio-0.2/motifs/03-papillon.png
+9ed2963f1b7e60ea9b114719cff5a859271495608b7a4121a656f2d22cd44f57  legacy/vyra-studio-0.2/motifs/04-logo.png
+a5e9146e6fdefce8d894bac60b30e1be19d2d0386827c67073ecb78d6fe2f5df  legacy/vyra-studio-0.2/motifs/05-prenom.png
+f30063a86550378134ea6b2e76fcbdf951edb4141c5ec8c1f06c6788f37ed747  legacy/vyra-studio-0.2/motifs/06-motif-arabe.png
+535b27c5994a6df3e5656f3657ce9b893222cc98587a53ff7170dce8ec21cc56  legacy/vyra-studio-0.2/motifs/07-geometrique.png
+6526d6d224baca6d383c217deb450b036741fef76fbffcea1d449fa02e4667a4  legacy/vyra-studio-0.2/motifs/08-illustration.png
+719ef6c6a2f196c9762f7bc26887587c12e2a3999b768172870a6c2c754770d2  legacy/vyra-studio-0.2/registre/empreintes-reference-v0.2.0.sha256
+b103c567423e855097e0b88e1dbfd5940a4832aa22a420054e1ed540f6df98ea  legacy/vyra-studio-0.2/registre/xe1-essais.json
+719ef6c6a2f196c9762f7bc26887587c12e2a3999b768172870a6c2c754770d2  packages/engine/fixtures/empreintes-reference-v0.2.0.sha256
+b103c567423e855097e0b88e1dbfd5940a4832aa22a420054e1ed540f6df98ea  packages/engine/fixtures/xe1-essais.json
+16b3a554a184fa76cca21c9f342293d5f33bc4e5961959c72c86c3196785c8b8  packages/engine/fixtures/motifs/01-chat.png
+364a57b96d76976549b481d8efa8b10229d24cb29a9207d5afceb630ba423c37  packages/engine/fixtures/motifs/02-fleur.png
+01b2380c386022febb7462cfed7394180e85658b03302180e4969604e3a504ca  packages/engine/fixtures/motifs/03-papillon.png
+9ed2963f1b7e60ea9b114719cff5a859271495608b7a4121a656f2d22cd44f57  packages/engine/fixtures/motifs/04-logo.png
+a5e9146e6fdefce8d894bac60b30e1be19d2d0386827c67073ecb78d6fe2f5df  packages/engine/fixtures/motifs/05-prenom.png
+f30063a86550378134ea6b2e76fcbdf951edb4141c5ec8c1f06c6788f37ed747  packages/engine/fixtures/motifs/06-motif-arabe.png
+535b27c5994a6df3e5656f3657ce9b893222cc98587a53ff7170dce8ec21cc56  packages/engine/fixtures/motifs/07-geometrique.png
+6526d6d224baca6d383c217deb450b036741fef76fbffcea1d449fa02e4667a4  packages/engine/fixtures/motifs/08-illustration.png
+5c67cb99eeaf0a40c65700fbb71cf0ce5cb9f7f4e34f8cf1fbf1b2c81d840483  packages/engine/src/generated/engine.js
+9ce588ddae34b214f87d441ba92ef064494bd4a23550af85c148adbee170ab3e  packages/engine/src/generated/engine.d.ts
+f4f0d35c245b6e7a40ba800e619c8ad2e4e18a91621f3906055af222ec16803e  packages/engine/scripts/extract.mjs
+ab9b8c19cd6f3e4e8c855d8c6011880b558d31bed8ca3b78bd5eaf62ff351cd9  packages/engine/scripts/verify-references.mjs
+738a67a07d1317eff344e65bd434d0fc80c3fac9f0a466c08ba2787ce8e7c885  packages/engine/scripts/pyembroidery_check.py
+16b3a554a184fa76cca21c9f342293d5f33bc4e5961959c72c86c3196785c8b8  apps/studio/public/motifs/01-chat.png
+364a57b96d76976549b481d8efa8b10229d24cb29a9207d5afceb630ba423c37  apps/studio/public/motifs/02-fleur.png
+01b2380c386022febb7462cfed7394180e85658b03302180e4969604e3a504ca  apps/studio/public/motifs/03-papillon.png
+9ed2963f1b7e60ea9b114719cff5a859271495608b7a4121a656f2d22cd44f57  apps/studio/public/motifs/04-logo.png
+a5e9146e6fdefce8d894bac60b30e1be19d2d0386827c67073ecb78d6fe2f5df  apps/studio/public/motifs/05-prenom.png
+f30063a86550378134ea6b2e76fcbdf951edb4141c5ec8c1f06c6788f37ed747  apps/studio/public/motifs/06-motif-arabe.png
+535b27c5994a6df3e5656f3657ce9b893222cc98587a53ff7170dce8ec21cc56  apps/studio/public/motifs/07-geometrique.png
+6526d6d224baca6d383c217deb450b036741fef76fbffcea1d449fa02e4667a4  apps/studio/public/motifs/08-illustration.png
