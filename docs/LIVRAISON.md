@@ -4,67 +4,51 @@ Mis à jour le 12/11/2026. « Fait » signifie développé **et** couvert par un
 
 | Lot | État |
 |---|---|
-| 0 — Audit et décision d'architecture | **Fait** : [`AUDIT.md`](AUDIT.md), [`ARCHITECTURE.md`](ARCHITECTURE.md) |
-| 1 — Socle commun | **Fait** : monorepo, moteur extrait et vérifié, contrats, API, base, sécurité, CI |
-| 2 — Studio : comptes, projets, persistance | **Fait** |
-| 3 — Studio : outils et moteur | **Largement fait** (voir « incomplet ») |
-| 4 — Simulation, analyse, contrôle, export | **Largement fait** (voir « incomplet ») |
-| 5 — Market : catalogue, acheteur | Non commencé |
-| 6 — Market : vendeur, publication, modération | Non commencé (lecteurs PES/DST prêts) |
-| 7 — Commandes, paiements de test, sécurité commerciale | Non commencé (architecture décidée, ADR-006) |
-| 8 — Tests complets, optimisation, production | Partiel (CI, tests navigateur sur 3 largeurs) |
+| 0 — Audit et décision d'architecture | Fait ([`AUDIT.md`](AUDIT.md), [`ARCHITECTURE.md`](ARCHITECTURE.md)) |
+| 1 — Socle commun | Fait |
+| 2 — Studio : comptes, projets, persistance, éditeur, export | Fait |
+| 3 — Consolidation, séparation du dépôt, préparation du Studio | Fait, sauf points ouverts ci-dessous ([`AUDIT-LOT3.md`](AUDIT-LOT3.md)) |
+| Market (catalogue, vendeurs, commandes, paiements) | **Non commencé**, volontairement |
 
-## Fonctionnel et testé
+## Lot 3 : fonctions demandées
 
-**Comptes** : inscription, connexion, déconnexion, vérification d'e-mail, mot de passe oublié et
-réinitialisation, changement de mot de passe, profil, langue, thème, mode Simple/Expert, appareils connectés et
-déconnexion des autres, verrouillage après 8 échecs, limitation de débit, journal d'audit.
-
-**Projets** : plusieurs projets par compte, création (import d'image PNG/JPG/WEBP/BMP/SVG/PDF, 8 motifs de test,
-toile vierge), ouverture, renommage, duplication, corbeille, restauration, suppression définitive confirmée par
-le nom, enregistrement automatique (1,2 s) avec contrôle de révision (conflit entre onglets détecté, rechargement
-ou copie proposés), historique des versions (points automatiques toutes les 10 min, versions nommées,
-restauration), image source conservée, miniatures calculées par le serveur, projets retrouvés après déconnexion.
-
-**Éditeur** : rendu fidèle par le moteur (fil réaliste, déplacements ; directions, densité, types en Expert),
-cadre de la machine, outils sélection/déplacement, nœuds (déplacer, ajouter par double-clic, supprimer par
-Alt+clic), main, tracé libre (point triple), rectangle, ellipse, zoom molette et boutons, pincement à deux
-doigts, ajuster ; calques (ordre de broderie, visibilité, regroupement par couleur) ; propriétés par type de
-point (densité, angle, longueur, compensation, sous-couche, largeur, passages), échelle et rotation ; fils
-(couleur, nom, marque, référence, PEC le plus proche, ajout, isoler une couleur) ; Annuler/Rétablir 80 pas et
-raccourcis (Ctrl+Z, Ctrl+Maj+Z, Ctrl+Y, Ctrl+S, V N H P R E F, Suppr, Échap, Espace).
-
-**Analyse, contrôle, export** : relance de l'analyse (couleurs, largeur, fond ; satin max et détail minimal en
-Expert) dans un Web Worker ; stratégie proposée par objet ; contrôle qualité (erreurs, avertissements,
-informations, localisation sur le motif) ; profil machine et cadre (fiche technique sourcée, jamais présentée
-comme un essai), état du registre d'essais XE1 ; export PES v1, PES v6, DST **exécuté par le serveur**, refusé
-tant qu'une erreur bloquante existe, historique des exports téléchargeables ; aperçus SVG et PNG ; simulation
-(lecture, 5 vitesses, curseur, compteur).
-
-**Interface** : identité Warm Wood (jetons à contrastes mesurés), clair/sombre/automatique, FR/NL/EN/AR avec
-arabe de droite à gauche, ordinateur (≥ 1 200 px), tablette (panneau latéral), mobile (feuille de réglages et
-onglets en bas).
-
-## Incomplet ou absent (à ne pas considérer comme livré)
-
-- **VYRA Market** : rien n'est encore construit (catalogue, boutiques, publication, panier, paiement,
-  bibliothèque, téléchargements achetés, modération, revenus).
-- **Paiements** : aucun ; Stripe n'est pas joignable depuis cet environnement et aucun compte n'est configuré.
-- Envoi réel des e-mails (transport Brevo écrit, non testé contre le service) ; stockage S3 (interface prête).
-- Studio : bibliothèque de nuanciers CSV, fiche de préparation imprimable, superposition de l'image source,
-  import des anciens projets du navigateur, poignées de transformation à la souris, copier/coller d'objets.
-- Exécution du moteur côté serveur dans un worker avec délai maximal ; double authentification ; suppression de
-  compte et export des données (RGPD) ; surveillance et sauvegardes de production.
-- Les 21 fichiers du kit XE1 ne sont pas régénérables sans le script du dépôt source.
+| # | Fonction | État |
+|---|---|---|
+| 1 | Import des anciens projets | **Fait** pour les fichiers `.stitch.json` exportés par l'ancien Studio (chaîne v0.2 → import → export serveur = empreintes de référence PES v1, PES v6, DST). **Impossible** pour les projets restés dans le navigateur de l'artifact (`localStorage` d'une autre origine, inaccessible) : il faut d'abord les exporter depuis l'ancien Studio. |
+| 2 | Nuanciers CSV | **Fait** : import sourcé (règles du moteur v0.2), statut officiel / approximatif / relevé personnel, correspondances, application à un fil, suppression |
+| 3 | Superposition de l'image source | **Fait** (comportement v0.2 : 45 % sur le rectangle du motif) |
+| 4 | Fiche de préparation imprimable | **Fait** (`/studio/p/<id>/fiche`) |
+| 5 | Stockage cloud privé | **Fait** : pilote S3 (SDK AWS), objets privés, aucune URL publique ; testé contre un serveur local qui vérifie les signatures SigV4 ; **non testé contre un vrai fournisseur** |
+| 6 | Appareils et sessions | **Fait** : liste lisible, révocation unitaire ou globale |
+| 7 | Double authentification | **Fait** : TOTP RFC 6238, secret chiffré, anti-rejeu, 10 codes de secours, exigée aussi après réinitialisation du mot de passe |
+| 8 | Export des données personnelles | **Fait** : archive ZIP (compte, journal, projets, versions, nuanciers, fichiers) |
+| 9 | Suppression complète du compte | **Fait** : mot de passe + confirmation (+ 2FA), données et fichiers effacés, journal anonymisé |
+| 10 | Calculs du moteur côté serveur | **Fait** : pool de workers, délai, mémoire, file bornée, validation des documents |
+| — | Sauvegarde et restauration | **Fait** (absentes avant le lot 3) |
+| — | Protocole de validation physique | **Fait** ([`VALIDATION-PHYSIQUE.md`](VALIDATION-PHYSIQUE.md)) + contrôleur du registre d'essais |
 
 ## Tests au 12/11/2026
 
 | Suite | Résultat |
 |---|---|
-| Moteur : registre de 45 empreintes, 24 exports identiques à la v0.2.0, lecteurs, QC, édition | 21/21 |
-| Contrats et arithmétique des commissions | 4/4 |
-| API sur PostgreSQL 16 réel (comptes, sécurité, projets, versions, fichiers, exports) | 24/24 |
-| Traductions (4 langues complètes, aucune clé manquante dans le code) | 3/3 |
-| Navigateur (Chromium) : parcours complet, reconnexion, dessin et export DST, export bloqué, mot de passe oublié, corbeille, langue et thème, mise en page ordinateur/tablette/mobile | 13/13 |
-| Relecture indépendante pyembroidery 1.5.1 des 24 fichiers | 24/24 identiques |
+| Moteur : gel (34 fichiers + régénération), 45 empreintes, 24 exports identiques, lecteurs, QC, performance, registre d'essais | 75/75 |
+| API sur PostgreSQL 16 : comptes, 2FA, sessions, export, suppression, projets, versions, fichiers, exports, durcissement, stockage S3, sauvegarde/restauration, configuration, nuanciers, import v0.2 | 69/69 |
+| Contrats | 4/4 |
+| Traductions (4 langues, aucune clé manquante dans le code) | 3/3 |
+| Navigateur (Chromium) : 15 parcours sur ordinateur + mise en page tablette et mobile | 18/18 |
+| Build d'origine v0.2 dans Chromium contre le registre | 24/24 identiques |
+| Relecture pyembroidery 1.5.1 | 24/24 concordants |
+| Démarrage en mode production (HSTS, CSP, cookie `__Host-` Secure, pas de boîte aux lettres) | vérifié |
 | `npm audit` | 0 vulnérabilité |
+
+## Encore ouvert
+
+- **Market** : rien (décision : pas avant consolidation du Studio).
+- Moteur : sources d'origine et script du kit XE1 introuvables ; aucun essai physique enregistré.
+- Production : supervision et alertes, limitation de débit partagée (Redis) pour plusieurs instances,
+  compilation de l'API, image conteneur, envoi d'e-mails et stockage S3 non testés contre les vrais services.
+- Sécurité : le verrouillage révèle l'existence d'un compte ; pas d'analyse antivirus des fichiers déposés
+  (images uniquement, signature vérifiée) ; pas de test de charge.
+- RGPD : documents et procédures juridiques à établir (voir [`AUDIT-LOT3.md`](AUDIT-LOT3.md) §4).
+- Studio : poignées de transformation à la souris, copier/coller d'objets, messages d'erreur de l'API en
+  français seulement.
