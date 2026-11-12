@@ -1,0 +1,11 @@
+{
+  "name": "@vyra/ui",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "Identité Warm Wood, composants React, client d'API et session partagés par VYRA Studio et VYRA Market.",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts", "./tokens.css": "./src/tokens.css" },
+  "dependencies": { "@vyra/shared": "*", "react": "^19.1.0", "react-dom": "^19.1.0", "react-router-dom": "^7.9.0" },
+  "devDependencies": { "@types/react": "^19.1.0", "@types/react-dom": "^19.1.0" }
+}

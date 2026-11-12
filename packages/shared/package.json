@@ -1,0 +1,10 @@
+{
+  "name": "@vyra/shared",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "Contrats partagés (schémas d'API), rôles, traductions et règles communes aux applications VYRA.",
+  "main": "src/index.ts",
+  "exports": { ".": "./src/index.ts", "./i18n": "./src/i18n/index.ts" },
+  "dependencies": { "zod": "^4.1.0" }
+}

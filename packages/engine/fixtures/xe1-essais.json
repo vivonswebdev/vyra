@@ -1,0 +1,189 @@
+{
+ "_regles": [
+  "Statuts autorisés : « Non testé », « Testé avec anomalie », « Testé et accepté », « Validé pour Brother XE1 ».",
+  "Chaque essai enregistre l'empreinte SHA-256 du fichier réellement brodé (« sha256_fichier », page 10 du dossier) : si elle ne correspond pas au fichier du dépôt, l'essai n'est pas valable pour ce fichier.",
+  "Les textes d'aide du modèle ne sont pas des observations : recopiés tels quels, ils sont refusés. Date au format AAAA-MM-JJ, jamais dans le futur. Photos uniquement dans 16_BENCHMARKS/essais/ (jpg, jpeg, png, heic, webp). Notes : entiers de 0 à 3. Chaque entrée doit correspondre à un fichier existant de 13_EXPORTS, au bon format.",
+  "Tout statut autre que « Non testé » exige au moins un essai daté avec toutes les conditions expérimentales (tissu, stabilisateur, aiguille, fil supérieur, fil de canette, tension, vitesse, cadre, dimensions du motif, état du tissu avant), l'état du tissu après, la lecture machine et des observations.",
+  "La lecture machine (fichier lu, taille, couleurs, points affichés) est enregistrée à part : elle prouve que le fichier est lisible, jamais que la broderie est bonne.",
+  "La qualité physique est notée de 0 à 3 sur 8 critères (points, contours, fils visibles, déplacements cousus, coupes, densité, couleurs, lisibilité) : 0 inacceptable, 1 défaut visible, 2 acceptable, 3 aucun défaut visible.",
+  "« Testé et accepté » et « Validé pour Brother XE1 » exigent : fichier lu, les 8 notes, des mesures et au moins une photo existante dans 16_BENCHMARKS/essais/.",
+  "« Validé pour Brother XE1 » exige en plus : aucune anomalie ouverte et aucune note inférieure à 2. Les formats v1 et v6 sont validés séparément.",
+  "Les essais PES v1 et PES v6 d'un même fichier doivent avoir les mêmes tissu, stabilisateur, aiguille, fils, tension, vitesse et cadre ; sinon ils ne sont pas comparables et le registre est refusé.",
+  "Un test simulé (logiciel) n'est jamais un essai : ce registre ne contient que des essais sur la machine.",
+  "Contrôle automatique : python3 02_TOOLS/pes-validator/check_registre.py 00_ADMIN/registers/xe1-essais.json"
+ ],
+ "machine": "Brother Stellaire Innov-is XE1",
+ "version_logiciel_reference": "0.2.0",
+ "fichiers": {
+  "xe1-kit/T1-mesure.pes": {
+   "format": "PES v1",
+   "statut": "Non testé",
+   "essais": []
+  },
+  "xe1-kit/T1-mesure.v6.pes": {
+   "format": "PES v6",
+   "statut": "Non testé",
+   "essais": []
+  },
+  "xe1-kit/T2-couleurs-coupes.pes": {
+   "format": "PES v1",
+   "statut": "Non testé",
+   "essais": []
+  },
+  "xe1-kit/T2-couleurs-coupes.v6.pes": {
+   "format": "PES v6",
+   "statut": "Non testé",
+   "essais": []
+  },
+  "xe1-kit/T3-densite.pes": {
+   "format": "PES v1",
+   "statut": "Non testé",
+   "essais": []
+  },
+  "xe1-kit/T3-densite.v6.pes": {
+   "format": "PES v6",
+   "statut": "Non testé",
+   "essais": []
+  },
+  "xe1-kit/T4-satin.pes": {
+   "format": "PES v1",
+   "statut": "Non testé",
+   "essais": []
+  },
+  "xe1-kit/T4-satin.v6.pes": {
+   "format": "PES v6",
+   "statut": "Non testé",
+   "essais": []
+  },
+  "xe1-kit/T5-compensation.pes": {
+   "format": "PES v1",
+   "statut": "Non testé",
+   "essais": []
+  },
+  "xe1-kit/T5-compensation.v6.pes": {
+   "format": "PES v6",
+   "statut": "Non testé",
+   "essais": []
+  },
+  "xe1-kit/T6-sous-couches.pes": {
+   "format": "PES v1",
+   "statut": "Non testé",
+   "essais": []
+  },
+  "xe1-kit/T6-sous-couches.v6.pes": {
+   "format": "PES v6",
+   "statut": "Non testé",
+   "essais": []
+  },
+  "xe1-kit/T7-petits-details.pes": {
+   "format": "PES v1",
+   "statut": "Non testé",
+   "essais": []
+  },
+  "xe1-kit/T7-petits-details.v6.pes": {
+   "format": "PES v6",
+   "statut": "Non testé",
+   "essais": []
+  },
+  "motifs/05-prenom.pes": {
+   "format": "PES v1",
+   "statut": "Non testé",
+   "essais": []
+  },
+  "motifs/05-prenom.v6.pes": {
+   "format": "PES v6",
+   "statut": "Non testé",
+   "essais": []
+  },
+  "motifs/02-fleur.pes": {
+   "format": "PES v1",
+   "statut": "Non testé",
+   "essais": []
+  },
+  "motifs/02-fleur.v6.pes": {
+   "format": "PES v6",
+   "statut": "Non testé",
+   "essais": []
+  }
+ },
+ "exemple_essai": {
+  "date": "AAAA-MM-JJ",
+  "operateur": "",
+  "sha256_fichier": "empreinte SHA-256 du fichier copié sur la clé (64 caractères)",
+  "conditions": {
+   "tissu": "nature, grammage, couleur",
+   "stabilisateur": "type, grammage, nombre de couches",
+   "aiguille": "type et taille (ex. 75/11 pointe bille)",
+   "fil_superieur": "marque, matière, poids",
+   "fil_canette": "marque, poids, couleur",
+   "tension": "réglage affiché par la machine",
+   "vitesse": "points/min réglés",
+   "cadre": "SA439S 13 × 18",
+   "dimensions_motif": "largeur × hauteur affichées par la machine (mm)",
+   "etat_tissu_avant": "repassé, tendu, sans pli…"
+  },
+  "lecture_machine": {
+   "fichier_lu": null,
+   "taille_affichee": "",
+   "couleurs_affichees": null,
+   "points_affiches": null,
+   "noms_couleurs": ""
+  },
+  "qualite": {
+   "qualite_points": {
+    "note": null,
+    "commentaire": ""
+   },
+   "qualite_contours": {
+    "note": null,
+    "commentaire": ""
+   },
+   "fils_visibles": {
+    "note": null,
+    "commentaire": ""
+   },
+   "deplacements_cousus": {
+    "note": null,
+    "commentaire": ""
+   },
+   "coupes": {
+    "note": null,
+    "commentaire": ""
+   },
+   "densite": {
+    "note": null,
+    "commentaire": ""
+   },
+   "comportement_couleurs": {
+    "note": null,
+    "commentaire": ""
+   },
+   "lisibilite": {
+    "note": null,
+    "commentaire": ""
+   }
+  },
+  "mesures": {
+   "largeur_mm": null,
+   "hauteur_mm": null,
+   "ecart_centre_mm": null,
+   "ecart_contour_mm": null,
+   "duree_min": null,
+   "casses_fil": null
+  },
+  "etat_tissu_apres": "plis, fronces, gondolage, trous, marques du cadre",
+  "anomalies": [
+   {
+    "code": "A3",
+    "description": "",
+    "gravite": "mineure | majeure | bloquante",
+    "ouverte": true
+   }
+  ],
+  "observations": "",
+  "photos": [
+   "16_BENCHMARKS/essais/AAAA-MM-JJ/T1-v1-face.jpg",
+   "16_BENCHMARKS/essais/AAAA-MM-JJ/T1-v1-envers.jpg"
+  ]
+ }
+}

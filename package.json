@@ -1,0 +1,26 @@
+{
+  "name": "vyra-platform",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*", "apps/*"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "engine:extract": "node packages/engine/scripts/extract.mjs",
+    "db:migrate": "npm run migrate -w @vyra/api",
+    "db:seed": "npm run seed -w @vyra/api",
+    "dev": "node scripts/dev.mjs",
+    "build": "npm run build -w @vyra/studio && npm run build -w @vyra/market",
+    "start": "npm run start -w @vyra/api",
+    "typecheck": "tsc -p packages/engine && tsc -p packages/shared && tsc -p packages/ui && tsc -p apps/api && tsc -p apps/studio && tsc -p apps/market",
+    "test": "vitest run",
+    "test:e2e": "playwright test --trace off",
+    "verify:references": "node packages/engine/scripts/verify-references.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.20.0",
+    "typescript": "~5.9.0",
+    "vitest": "^5.1.0"
+  }
+}

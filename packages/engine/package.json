@@ -1,0 +1,26 @@
+{
+  "name": "@vyra/engine",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "Moteur de broderie VYRA : analyse d'image, plan de couture, contrôle qualité, encodeurs PES v1/v6 et DST, lecteurs PES/DST, rendu.",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./browser": "./src/browser.ts",
+    "./fixtures/*": "./fixtures/*"
+  },
+  "scripts": {
+    "extract": "node scripts/extract.mjs"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.28.0",
+    "@babel/generator": "^7.28.0",
+    "@babel/parser": "^7.28.0",
+    "@babel/traverse": "^7.28.0",
+    "acorn": "^8.15.0",
+    "acorn-walk": "^8.3.4",
+    "pngjs": "^7.0.0",
+    "prettier": "^3.6.0"
+  }
+}
