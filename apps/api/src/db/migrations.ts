@@ -14,6 +14,18 @@ export async function migrate(db: Db, log: (m: string) => void = () => {}): Prom
   const done = new Map<string, string>(
     (await db.query("SELECT name, checksum FROM schema_migrations")).rows.map((r) => [r.name, r.checksum]),
   );
+  // Verrou consultatif : deux instances qui démarrent ensemble n'appliquent jamais la même migration.
+  const lock = await db.connect();
+  await lock.query("SELECT pg_advisory_lock(7279431)");
+  try {
+    return await applyAll(db, done, log);
+  } finally {
+    await lock.query("SELECT pg_advisory_unlock(7279431)").catch(() => {});
+    lock.release();
+  }
+}
+
+async function applyAll(db: Db, done: Map<string, string>, log: (m: string) => void): Promise<string[]> {
   const files = fs.readdirSync(DIR).filter((f) => /^\d{3}_.+\.sql$/.test(f)).sort();
   const applied: string[] = [];
   for (const f of files) {

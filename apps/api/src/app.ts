@@ -14,11 +14,14 @@ import { LocalStorage, type Storage } from "./lib/storage.js";
 import authPlugin from "./plugins/auth.js";
 import authRoutes from "./routes/auth.js";
 import projectRoutes from "./routes/projects.js";
+import accountRoutes from "./routes/account.js";
 import devRoutes from "./routes/dev.js";
+import { EnginePool } from "./engine/pool.js";
 
 declare module "fastify" {
   interface FastifyInstance {
     storage: Storage;
+    engine: EnginePool;
   }
 }
 
@@ -42,6 +45,9 @@ export async function buildApp({ cfg, db, storage }: AppDeps): Promise<FastifyIn
   app.decorate("db", db);
   app.decorate("cfg", cfg);
   app.decorate("storage", storage ?? new LocalStorage(cfg.STORAGE_DIR));
+  const engine = new EnginePool({ size: cfg.ENGINE_WORKERS, timeoutMs: cfg.ENGINE_TIMEOUT_MS, maxQueue: cfg.ENGINE_QUEUE, maxMemoryMb: cfg.ENGINE_MEMORY_MB });
+  app.decorate("engine", engine);
+  app.addHook("onClose", async () => engine.close());
 
   await app.register(cookie);
   await app.register(helmet, {
@@ -106,8 +112,9 @@ export async function buildApp({ cfg, db, storage }: AppDeps): Promise<FastifyIn
   });
 
   await app.register(authRoutes);
+  await app.register(accountRoutes);
   await app.register(projectRoutes);
-  if (!cfg.isProd) await app.register(devRoutes);
+  if (!cfg.isProd && cfg.DEV_MAILBOX) await app.register(devRoutes);
 
   // Les liens des e-mails pointent vers /account/… : redirection vers l'écran du Studio.
   app.get("/account/:action", async (req, reply) => {

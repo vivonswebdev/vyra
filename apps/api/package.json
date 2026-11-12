@@ -22,8 +22,13 @@
     "fastify-plugin": "^5.0.1",
     "pg": "^8.16.0",
     "pngjs": "^7.0.0",
+    "qrcode": "^1.5.4",
     "stripe": "^18.5.0",
     "zod": "^4.1.0"
   },
-  "devDependencies": { "@types/pg": "^8.15.0", "@types/pngjs": "^6.0.5" }
+  "devDependencies": {
+    "@types/pg": "^8.15.0",
+    "@types/pngjs": "^6.0.5",
+    "@types/qrcode": "^1.5.6"
+  }
 }

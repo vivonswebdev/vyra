@@ -23,6 +23,7 @@ const child = spawn("npx", ["tsx", "apps/api/src/server.ts"], {
     STORAGE_DIR: storage,
     LOG_LEVEL: "warn",
     AUTH_RATE_LIMIT: "1000",
+    DEV_MAILBOX: "1",
   },
 });
 const stop = () => child.kill("SIGTERM");

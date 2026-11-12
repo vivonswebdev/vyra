@@ -16,6 +16,9 @@ import { badRequest, conflict, HttpError, unauthorized } from "../lib/errors.js"
 import { queueEmail } from "../lib/mailer.js";
 import { audit } from "../lib/audit.js";
 import { toSessionUser, USER_COLUMNS } from "../plugins/auth.js";
+import { SecretBox } from "../lib/secretbox.js";
+import { checkSecondFactor } from "./account.js";
+import { z } from "zod";
 
 const LOCK_AFTER = 8; // échecs consécutifs
 const LOCK_MINUTES = 15;
@@ -24,6 +27,7 @@ export default async function authRoutes(app: FastifyInstance) {
   const { db, cfg } = app;
   const strict = { config: { rateLimit: { max: cfg.AUTH_RATE_LIMIT, timeWindow: "1 minute" } } };
 
+  const box = new SecretBox(cfg.secretKey);
   const link = (path: string, token: string) => `${cfg.PUBLIC_URL}${path}?token=${encodeURIComponent(token)}`;
 
   async function loadUser(id: string) {
@@ -59,7 +63,7 @@ export default async function authRoutes(app: FastifyInstance) {
   app.post("/api/auth/login", strict, async (req, reply) => {
     const input = LoginInput.parse(req.body);
     const { rows } = await db.query(
-      "SELECT id, password_hash, status, locked_until FROM users WHERE email = $1",
+      "SELECT id, password_hash, status, locked_until, totp_enabled_at FROM users WHERE email = $1",
       [input.email],
     );
     const u = rows[0];
@@ -81,9 +85,40 @@ export default async function authRoutes(app: FastifyInstance) {
       throw unauthorized(u.status === "active" ? "Adresse e-mail ou mot de passe incorrect." : "Ce compte est suspendu.");
     }
     await db.query("UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = $1", [u.id]);
+    if (u.totp_enabled_at) {
+      // Deuxième étape : aucune session n'est ouverte tant que le code n'est pas vérifié.
+      const { token, hash } = newToken();
+      await db.query("INSERT INTO mfa_challenges (token_hash, user_id, expires_at) VALUES ($1, $2, now() + interval '5 minutes')", [hash, u.id]);
+      return { mfaRequired: true, mfaToken: token };
+    }
     await app.startSession(reply, req, u.id);
     await audit(db, { actorId: u.id, action: "account.login", subject: `user:${u.id}`, ip: req.ip });
     return { user: await loadUser(u.id) };
+  });
+
+  app.post("/api/auth/login/mfa", strict, async (req, reply) => {
+    const input = z
+      .object({ mfaToken: z.string().min(20).max(200), code: z.string().trim().optional(), recoveryCode: z.string().trim().optional() })
+      .parse(req.body);
+    const hash = tokenHash(input.mfaToken);
+    const { rows } = await db.query(
+      "UPDATE mfa_challenges SET attempts = attempts + 1 WHERE token_hash = $1 AND expires_at > now() RETURNING user_id, attempts",
+      [hash],
+    );
+    const ch = rows[0];
+    if (!ch || ch.attempts > 5) {
+      await db.query("DELETE FROM mfa_challenges WHERE token_hash = $1", [hash]);
+      throw unauthorized("Étape de vérification expirée. Reconnectez-vous.");
+    }
+    const ok = await checkSecondFactor(db, box, ch.user_id, { code: input.code || undefined, recoveryCode: input.recoveryCode || undefined });
+    if (!ok) {
+      await audit(db, { actorId: ch.user_id, action: "account.mfa_failed", subject: `user:${ch.user_id}`, ip: req.ip });
+      throw unauthorized("Code incorrect.");
+    }
+    await db.query("DELETE FROM mfa_challenges WHERE token_hash = $1", [hash]);
+    await app.startSession(reply, req, ch.user_id);
+    await audit(db, { actorId: ch.user_id, action: "account.login", subject: `user:${ch.user_id}`, ip: req.ip, details: { mfa: input.recoveryCode ? "recovery" : "totp" } });
+    return { user: await loadUser(ch.user_id) };
   });
 
   app.post("/api/auth/logout", async (req, reply) => {
@@ -164,10 +199,14 @@ export default async function authRoutes(app: FastifyInstance) {
       );
       await c.query("DELETE FROM sessions WHERE user_id = $1", [id]);
       await audit(c, { actorId: id, action: "account.password_reset", subject: `user:${id}`, ip: req.ip });
+      // Avec la double authentification, l'accès à la boîte e-mail ne suffit pas : connexion complète exigée.
+      const mfa = await c.query("SELECT totp_enabled_at FROM users WHERE id = $1", [id]);
+      if (mfa.rows[0].totp_enabled_at) return { id, loginRequired: true };
       await app.startSession(reply, req, id, c);
-      return id;
+      return { id, loginRequired: false };
     });
-    return { user: await loadUser(userId) };
+    if (userId.loginRequired) return { user: null, loginRequired: true };
+    return { user: await loadUser(userId.id) };
   });
 
   app.post("/api/auth/change-password", strict, async (req, reply) => {
@@ -200,21 +239,5 @@ export default async function authRoutes(app: FastifyInstance) {
       [u.id, input.displayName ?? null, input.locale ?? null, input.theme ?? null, input.preferences ? JSON.stringify(input.preferences) : null],
     );
     return { user: await loadUser(u.id) };
-  });
-
-  app.get("/api/me/sessions", async (req) => {
-    const u = app.requireUser(req);
-    const { rows } = await db.query(
-      "SELECT created_at, last_seen_at, expires_at, ip, user_agent, token_hash = $2 AS current FROM sessions WHERE user_id = $1 AND expires_at > now() ORDER BY last_seen_at DESC",
-      [u.id, req.sessionHash],
-    );
-    return { sessions: rows };
-  });
-
-  app.post("/api/me/sessions/revoke-others", async (req) => {
-    const u = app.requireUser(req);
-    const r = await db.query("DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2", [u.id, req.sessionHash]);
-    await audit(db, { actorId: u.id, action: "account.sessions_revoked", subject: `user:${u.id}`, ip: req.ip, details: { count: r.rowCount } });
-    return { revoked: r.rowCount };
   });
 }

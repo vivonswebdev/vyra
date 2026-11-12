@@ -3,7 +3,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { ExportInput, ProjectCreateInput, ProjectUpdateInput, type ExportDTO, type ProjectDTO, type ProjectSummaryDTO } from "@vyra/shared";
-import { buildPlan, exportDesign, ExportBlockedError, planToSvg, type Design } from "@vyra/engine";
+import { EXPORT_FORMATS, safeFileName, type PlanStats, type QualityIssue, type QualityReport } from "@vyra/engine";
 import { tx, type Queryable } from "../db/pool.js";
 import { badRequest, conflict, HttpError, notFound } from "../lib/errors.js";
 import { audit } from "../lib/audit.js";
@@ -237,7 +237,7 @@ export default async function projectRoutes(app: FastifyInstance) {
     if (!p.design) throw notFound("Aucun motif dans ce projet.");
     let svg: string = p.thumbnail_svg;
     if (p.thumbnail_revision !== p.revision || !svg) {
-      svg = planToSvg(buildPlan(p.design as Design), p.name);
+      svg = (await app.engine.run<{ svg: string }>("thumbnail", { design: p.design, name: p.name })).svg;
       await db.query("UPDATE projects SET thumbnail_svg = $2, thumbnail_revision = $3 WHERE id = $1", [id, svg, p.revision]);
     }
     reply
@@ -282,15 +282,17 @@ export default async function projectRoutes(app: FastifyInstance) {
     const p = await own(db, u.id, id);
     if (!p.design) throw badRequest("Le projet ne contient pas encore de motif.");
     const settings = p.settings ?? {};
-    let result;
-    try {
-      result = exportDesign(p.design as Design, format, { label: p.name, machineId: settings.machineId, hoopId: settings.hoopId });
-    } catch (e) {
-      if (e instanceof ExportBlockedError)
-        throw new HttpError(422, "export_blocked", "Export bloqué par le contrôle qualité.", { issues: e.issues });
-      throw e;
-    }
-    const { bytes, filename, analysis } = result;
+    const r = await app.engine.run<{ blocked: boolean; bytes?: Uint8Array; stats: PlanStats; qc: QualityReport; issues?: QualityIssue[] }>("export", {
+      design: p.design,
+      format,
+      label: p.name,
+      machineId: settings.machineId,
+      hoopId: settings.hoopId,
+    });
+    if (r.blocked) throw new HttpError(422, "export_blocked", "Export bloqué par le contrôle qualité.", { issues: r.issues });
+    const bytes = new Uint8Array(r.bytes!);
+    const filename = safeFileName(p.name) + EXPORT_FORMATS[format].ext;
+    const analysis = { stats: r.stats, qc: r.qc };
     const key = newStorageKey("exports", "." + (format === "dst" ? "dst" : "pes"));
     await storage.put(key, bytes);
     const dto = await tx(db, async (c) => {

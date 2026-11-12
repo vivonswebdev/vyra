@@ -76,18 +76,51 @@ export const ProjectSettings = z
 export type ProjectSettings = z.infer<typeof ProjectSettings>;
 
 /**
- * Document de broderie (Design du moteur). Validation structurelle légère côté API :
- * le moteur reste l'autorité sur le contenu ; la taille est bornée par la limite du corps.
+ * Document de broderie (Design du moteur). Le moteur reste l'autorité sur le contenu, mais l'API refuse
+ * ce qui pourrait le faire calculer sans fin ou planter : coordonnées non finies, densité nulle,
+ * paramètres hors bornes, nombre de points excessif.
  */
+export const MAX_DESIGN_POINTS = 400_000;
+const coord = z.number().finite().min(-10_000).max(10_000);
+const Point = z.object({ x: coord, y: coord });
+const Ring = z.array(Point).max(100_000);
+const bounded = (min: number, max: number) => z.number().finite().min(min).max(max);
+const FillParams = z.object({ angle: bounded(-360, 360), spacing: bounded(0.1, 5), stitchLength: bounded(0.3, 12.1), pullComp: bounded(0, 3) }).passthrough();
+const SatinParams = z.object({ angle: bounded(-360, 360).nullable(), spacing: bounded(0.1, 5), pullComp: bounded(0, 3), width: bounded(0.1, 30) }).passthrough();
+const RunParams = z.object({ stitchLength: bounded(0.3, 12.1), repeats: z.number().int().min(1).max(9) }).passthrough();
+const DesignObjectDoc = z
+  .object({
+    id: z.string().max(80),
+    name: z.string().max(200).optional(),
+    type: z.enum(["fill", "satin", "satinBorder", "zigzag", "running", "triple", "bean", "applique"]),
+    color: z.number().int().min(0).max(254),
+    shape: z.object({ outer: Ring, holes: z.array(Ring).max(5_000) }),
+    path: Ring.optional(),
+    fill: FillParams,
+    satin: SatinParams,
+    run: RunParams,
+    visible: z.boolean(),
+  })
+  .passthrough();
+
 export const DesignDoc = z
   .object({
     name: z.string().max(200),
-    widthMm: z.number().finite().nonnegative(),
-    heightMm: z.number().finite().nonnegative(),
+    widthMm: z.number().finite().nonnegative().max(10_000),
+    heightMm: z.number().finite().nonnegative().max(10_000),
     threads: z.array(z.object({ rgb: z.string().regex(/^#[0-9a-fA-F]{6}$/), name: z.string().max(120), brand: z.string().max(120), code: z.string().max(60) }).passthrough()).max(255),
-    objects: z.array(z.object({ id: z.string().max(80), type: z.string().max(40), color: z.number().int().min(0) }).passthrough()).max(5000),
+    objects: z.array(DesignObjectDoc).max(5000),
   })
-  .passthrough();
+  .passthrough()
+  .superRefine((d, ctx) => {
+    let n = 0;
+    for (const o of d.objects) {
+      n += o.shape.outer.length + (o.path?.length ?? 0);
+      for (const h of o.shape.holes) n += h.length;
+      if (o.color >= d.threads.length) ctx.addIssue({ code: "custom", message: `L'objet ${o.id} utilise un fil inexistant.`, path: ["objects"] });
+    }
+    if (n > MAX_DESIGN_POINTS) ctx.addIssue({ code: "custom", message: `Document trop complexe (${n} points, ${MAX_DESIGN_POINTS} au plus).`, path: ["objects"] });
+  });
 
 export const ProjectCreateInput = z.object({
   name: z.string().trim().min(1).max(120),
