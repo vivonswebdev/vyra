@@ -82,7 +82,7 @@ export default function PrepSheet() {
               <th>{t("obj.name")}</th>
               <th>{t("th.brand")}</th>
               <th>{t("th.code")}</th>
-              <th>{t("th.points", { n: "" }).trim()}</th>
+              <th>{t("prep.stitches")}</th>
               <th>{t("prep.length")}</th>
             </tr>
           </thead>

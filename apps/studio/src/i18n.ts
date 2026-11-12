@@ -192,6 +192,7 @@ const S: Record<string, [string, string, string, string]> = {
   "prep.print": ["Imprimer", "Afdrukken", "Print", "طباعة"],
   "prep.order": ["Ordre", "Volgorde", "Order", "الترتيب"],
   "prep.color": ["Couleur", "Kleur", "Color", "اللون"],
+  "prep.stitches": ["Points", "Steken", "Stitches", "الغرز"],
   "prep.length": ["Fil estimé", "Geschatte draad", "Estimated thread", "الخيط المقدّر"],
   "prep.stop": ["arrêt (même couleur)", "stop (zelfde kleur)", "stop (same color)", "توقف (اللون نفسه)"],
   "prep.note": ["Ordre des bobines dans l'ordre de broderie. Longueurs estimées à partir des points (+10 %), canette non comprise. Cette fiche décrit le fichier ; elle ne garantit pas le résultat sur tissu.", "Volgorde van de klossen in borduurvolgorde. Lengtes geschat op basis van de steken (+10 %), zonder spoel. Dit blad beschrijft het bestand; het garandeert het resultaat op stof niet.", "Spools in stitching order. Lengths estimated from the stitches (+10%), bobbin not included. This sheet describes the file; it does not guarantee the result on fabric.", "البكرات بترتيب التطريز. الأطوال مقدّرة من الغرز (+10 ٪) دون خيط المكوك. تصف هذه الورقة الملف ولا تضمن النتيجة على القماش."],
