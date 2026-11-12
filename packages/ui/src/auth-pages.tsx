@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { PASSWORD_MIN, type UserDTO } from "@vyra/shared";
-import { fieldErrors, get, post } from "./api.js";
+import { api, downloadUrl, fieldErrors, get, post, saveBlob } from "./api.js";
 import { Brand, Field, LangSwitch, Spinner, ThemeSwitch, useErrorText, useToast, Segmented } from "./components.js";
 import { useI18n, type Lang } from "./i18n.js";
 import { useSession, type Theme } from "./session.js";
@@ -51,6 +51,8 @@ export function LoginPage({ app }: { app: string }) {
   const errText = useErrorText();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [mfaToken, setMfaToken] = useState<string | null>(null);
+  const [useRecovery, setUseRecovery] = useState(false);
   if (user) return <Navigate to={safeNext(params.get("next"))} replace />;
   const submit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -58,8 +60,9 @@ export function LoginPage({ app }: { app: string }) {
     setBusy(true);
     setError("");
     try {
-      const r = await post<{ user: UserDTO }>("/api/auth/login", { email: f.get("email"), password: f.get("password") });
-      setUser(r.user);
+      const r = await post<{ user?: UserDTO; mfaRequired?: boolean; mfaToken?: string }>("/api/auth/login", { email: f.get("email"), password: f.get("password") });
+      if (r.mfaRequired) return setMfaToken(r.mfaToken!);
+      setUser(r.user!);
       nav(safeNext(params.get("next")), { replace: true });
     } catch (err) {
       setError(errText(err));
@@ -67,8 +70,58 @@ export function LoginPage({ app }: { app: string }) {
       setBusy(false);
     }
   };
+  const submitMfa = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const v = String(new FormData(e.currentTarget).get("code") ?? "").trim();
+    setBusy(true);
+    setError("");
+    try {
+      const r = await post<{ user: UserDTO }>("/api/auth/login/mfa", { mfaToken, ...(useRecovery ? { recoveryCode: v } : { code: v }) });
+      setUser(r.user);
+      nav(safeNext(params.get("next")), { replace: true });
+    } catch (err) {
+      setError(errText(err));
+      if ((err as { status?: number }).status === 401 && /expirée/.test(errText(err))) setMfaToken(null);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (mfaToken)
+    return (
+      <AuthShell app={app} title={t("mfa.title")}>
+        {error && (
+          <div className="alert error" role="alert">
+            {error}
+          </div>
+        )}
+        <form onSubmit={submitMfa} noValidate>
+          <p className="muted">{t("mfa.intro")}</p>
+          <Field label={useRecovery ? t("mfa.recovery") : t("mfa.code")}>
+            <input
+              className="input num"
+              name="code"
+              key={String(useRecovery)}
+              autoComplete="one-time-code"
+              inputMode={useRecovery ? "text" : "numeric"}
+              maxLength={useRecovery ? 11 : 6}
+              autoFocus
+              data-testid="mfa-code"
+            />
+          </Field>
+          <button className="btn primary block" disabled={busy}>
+            {t("mfa.verify")}
+          </button>
+        </form>
+        <div className="auth-links">
+          <button className="link" onClick={() => setUseRecovery(!useRecovery)}>
+            {useRecovery ? t("mfa.useApp") : t("mfa.useRecovery")}
+          </button>
+        </div>
+      </AuthShell>
+    );
   return (
     <AuthShell app={app} title={t("auth.login")}>
+      {params.get("reset") === "1" && <div className="alert info">{t("auth.loginAgain")}</div>}
       {error && (
         <div className="alert error" role="alert">
           {error}
@@ -226,7 +279,8 @@ export function ResetPasswordPage({ app }: { app: string }) {
     setBusy(true);
     setError("");
     try {
-      const r = await post<{ user: UserDTO }>("/api/auth/reset-password", { token, password: new FormData(e.currentTarget).get("password") });
+      const r = await post<{ user: UserDTO | null; loginRequired?: boolean }>("/api/auth/reset-password", { token, password: new FormData(e.currentTarget).get("password") });
+      if (r.loginRequired) return nav("/login?reset=1", { replace: true });
       setUser(r.user);
       nav("/", { replace: true });
     } catch (err) {
@@ -428,11 +482,28 @@ export function AccountSettings() {
           <button className="btn">{t("account.changePassword")}</button>
         </form>
         <h3 style={{ marginTop: 20 }}>{t("account.sessions")}</h3>
-        <ul className="small" style={{ paddingInlineStart: 18 }}>
-          {sessions.map((s, i) => (
-            <li key={i}>
-              {(s.user_agent || "?").slice(0, 70)} · <span className="num">{new Date(s.last_seen_at).toLocaleString(lang)}</span>
-              {s.current && <strong> · {t("account.current")}</strong>}
+        <ul className="session-list" data-testid="sessions">
+          {sessions.map((s) => (
+            <li key={s.id}>
+              <span>
+                <strong>{s.device}</strong>
+                {s.current && <span className="badge ok"> {t("account.current")}</span>}
+                <br />
+                <small className="muted">
+                  {s.ip ?? "?"} · {t("account.lastSeen", { date: new Date(s.lastSeenAt).toLocaleString(lang) })}
+                </small>
+              </span>
+              {!s.current && (
+                <button
+                  className="btn sm"
+                  onClick={async () => {
+                    await api("DELETE", `/api/me/sessions/${s.id}`);
+                    loadSessions();
+                  }}
+                >
+                  {t("account.revoke")}
+                </button>
+              )}
             </li>
           ))}
         </ul>
@@ -448,6 +519,159 @@ export function AccountSettings() {
           {t("account.revokeOthers")}
         </button>
       </section>
+      <TwoFactorSection />
+      <DataSection />
     </div>
+  );
+}
+
+function TwoFactorSection() {
+  const { t, lang } = useI18n();
+  const toast = useToast();
+  const errText = useErrorText();
+  const [state, setState] = useState<{ enabled: boolean; enabledAt: string | null; recoveryCodesRemaining: number } | null>(null);
+  const [setup, setSetup] = useState<{ secret: string; qrSvg: string } | null>(null);
+  const [codes, setCodes] = useState<string[] | null>(null);
+  const [error, setError] = useState("");
+  const load = () => get<any>("/api/me/2fa").then(setState, () => {});
+  useEffect(() => {
+    load();
+  }, []);
+  if (!state) return null;
+  const run = (fn: () => Promise<void>) => async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setError("");
+    try {
+      await fn.call(e.currentTarget);
+    } catch (err) {
+      setError(errText(err));
+    }
+  };
+  return (
+    <section className="card" data-testid="mfa-section">
+      <h2>{t("mfa.section")}</h2>
+      {error && <div className="alert error">{error}</div>}
+      {codes && (
+        <div className="alert ok">
+          <strong>{t("mfa.codesTitle")}</strong>
+          <p className="small">{t("mfa.codesNote")}</p>
+          <ul className="recovery-codes num" data-testid="recovery-codes">
+            {codes.map((c) => (
+              <li key={c}>{c}</li>
+            ))}
+          </ul>
+          <button className="btn sm" onClick={() => saveBlob(new Blob([codes.join("\n") + "\n"], { type: "text/plain" }), "vyra-codes-de-secours.txt")}>
+            {t("mfa.download")}
+          </button>
+        </div>
+      )}
+      {state.enabled ? (
+        <>
+          <p>{t("mfa.on", { date: new Date(state.enabledAt!).toLocaleDateString(lang), n: state.recoveryCodesRemaining })}</p>
+          <form
+            onSubmit={run(async function (this: HTMLFormElement) {
+              const f = new FormData(this);
+              await post("/api/me/2fa/disable", { password: f.get("password"), code: f.get("code") });
+              setCodes(null);
+              toast(t("mfa.disabled"));
+              load();
+            })}
+          >
+            <div className="row2">
+              <Field label={t("auth.password")}>
+                <input className="input" name="password" type="password" autoComplete="current-password" />
+              </Field>
+              <Field label={t("mfa.code")}>
+                <input className="input num" name="code" inputMode="numeric" maxLength={6} autoComplete="one-time-code" />
+              </Field>
+            </div>
+            <button className="btn danger sm">{t("mfa.disable")}</button>
+          </form>
+        </>
+      ) : setup ? (
+        <form
+          onSubmit={run(async function (this: HTMLFormElement) {
+            const r = await post<{ recoveryCodes: string[] }>("/api/me/2fa/enable", { code: new FormData(this).get("code") });
+            setCodes(r.recoveryCodes);
+            setSetup(null);
+            toast(t("mfa.enabled"));
+            load();
+          })}
+        >
+          <p className="small">{t("mfa.scan")}</p>
+          <img className="qr" alt="QR code" src={"data:image/svg+xml;base64," + btoa(setup.qrSvg)} width={180} height={180} />
+          <p className="small">
+            {t("mfa.key")} : <code className="num" data-testid="mfa-secret">{setup.secret.replace(/(.{4})/g, "$1 ").trim()}</code>
+          </p>
+          <Field label={t("mfa.code")}>
+            <input className="input num" name="code" inputMode="numeric" maxLength={6} autoComplete="one-time-code" data-testid="mfa-enable-code" />
+          </Field>
+          <button className="btn primary sm">{t("mfa.confirm")}</button>
+        </form>
+      ) : (
+        <form
+          onSubmit={run(async function (this: HTMLFormElement) {
+            setSetup(await post("/api/me/2fa/setup", { password: new FormData(this).get("password") }));
+          })}
+        >
+          <p className="muted">{t("mfa.off")}</p>
+          <Field label={t("auth.password")}>
+            <input className="input" name="password" type="password" autoComplete="current-password" data-testid="mfa-password" />
+          </Field>
+          <button className="btn sm">{t("mfa.start")}</button>
+        </form>
+      )}
+    </section>
+  );
+}
+
+function DataSection() {
+  const { t } = useI18n();
+  const toast = useToast();
+  const errText = useErrorText();
+  const { setUser } = useSession();
+  const nav = useNavigate();
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState("");
+  return (
+    <section className="card" data-testid="data-section">
+      <h2>{t("account.data")}</h2>
+      <p className="small">{t("account.exportIntro")}</p>
+      <button className="btn" data-testid="export-data" onClick={() => downloadUrl("/api/me/export", "vyra-donnees.zip").catch((e) => toast(errText(e), "error"))}>
+        {t("account.export")}
+      </button>
+      <h3 style={{ marginTop: 20, color: "var(--err)" }}>{t("account.deleteTitle")}</h3>
+      <p className="small">{t("account.deleteIntro")}</p>
+      {error && <div className="alert error">{error}</div>}
+      <form
+        onSubmit={async (e) => {
+          e.preventDefault();
+          const f = new FormData(e.currentTarget);
+          setError("");
+          try {
+            await api("DELETE", "/api/me", { password: f.get("password"), confirm, ...(f.get("code") ? { code: f.get("code") } : {}) });
+            setUser(null);
+            nav("/login", { replace: true });
+          } catch (err) {
+            setError(errText(err));
+          }
+        }}
+      >
+        <div className="row2">
+          <Field label={t("auth.password")}>
+            <input className="input" name="password" type="password" autoComplete="current-password" data-testid="delete-password" />
+          </Field>
+          <Field label={t("mfa.code")} hint="2FA">
+            <input className="input num" name="code" inputMode="numeric" maxLength={6} autoComplete="one-time-code" />
+          </Field>
+        </div>
+        <Field label={t("account.deleteConfirm")}>
+          <input className="input" value={confirm} onChange={(e) => setConfirm(e.target.value)} data-testid="delete-confirm" />
+        </Field>
+        <button className="btn danger" disabled={confirm !== "SUPPRIMER"} data-testid="delete-account">
+          {t("account.deleteGo")}
+        </button>
+      </form>
+    </section>
   );
 }

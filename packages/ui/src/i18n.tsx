@@ -252,6 +252,41 @@ export const COMMON: Dicts = {
   },
 };
 
+// Textes ajoutés au lot 3 : [français, néerlandais, anglais, arabe].
+const COMMON_EXTRA: Record<string, [string, string, string, string]> = {
+  "mfa.title": ["Vérification en deux étapes", "Verificatie in twee stappen", "Two-step verification", "التحقق بخطوتين"],
+  "mfa.intro": ["Saisissez le code à 6 chiffres de votre application d'authentification.", "Voer de 6-cijferige code van je authenticatie-app in.", "Enter the 6-digit code from your authenticator app.", "أدخل الرمز المكوّن من 6 أرقام من تطبيق المصادقة."],
+  "mfa.code": ["Code", "Code", "Code", "الرمز"],
+  "mfa.verify": ["Vérifier", "Verifiëren", "Verify", "تحقّق"],
+  "mfa.useRecovery": ["Utiliser un code de secours", "Een herstelcode gebruiken", "Use a recovery code", "استخدام رمز احتياطي"],
+  "mfa.useApp": ["Utiliser l'application", "De app gebruiken", "Use the app", "استخدام التطبيق"],
+  "mfa.recovery": ["Code de secours", "Herstelcode", "Recovery code", "رمز احتياطي"],
+  "mfa.section": ["Double authentification", "Tweestapsverificatie", "Two-factor authentication", "المصادقة الثنائية"],
+  "mfa.on": ["Activée depuis le {date}. Codes de secours restants : {n}.", "Actief sinds {date}. Resterende herstelcodes: {n}.", "Enabled since {date}. Recovery codes left: {n}.", "مفعّلة منذ {date}. الرموز الاحتياطية المتبقية: {n}."],
+  "mfa.off": ["Désactivée. Recommandée pour les comptes vendeurs.", "Uitgeschakeld. Aanbevolen voor verkopersaccounts.", "Disabled. Recommended for seller accounts.", "غير مفعّلة. يُنصح بها لحسابات البائعين."],
+  "mfa.start": ["Activer", "Inschakelen", "Enable", "تفعيل"],
+  "mfa.scan": ["Scannez ce code avec votre application (ou saisissez la clé), puis entrez le code affiché.", "Scan deze code met je app (of voer de sleutel in) en geef de getoonde code in.", "Scan this code with your app (or enter the key), then type the code shown.", "امسح هذا الرمز بتطبيقك (أو أدخل المفتاح) ثم أدخل الرمز الظاهر."],
+  "mfa.key": ["Clé", "Sleutel", "Key", "المفتاح"],
+  "mfa.confirm": ["Confirmer l'activation", "Inschakelen bevestigen", "Confirm activation", "تأكيد التفعيل"],
+  "mfa.codesTitle": ["Codes de secours", "Herstelcodes", "Recovery codes", "الرموز الاحتياطية"],
+  "mfa.codesNote": ["Conservez ces 10 codes en lieu sûr : chacun permet une connexion sans téléphone. Ils ne seront plus affichés.", "Bewaar deze 10 codes veilig: elk maakt één aanmelding zonder telefoon mogelijk. Ze worden niet opnieuw getoond.", "Keep these 10 codes safe: each allows one sign-in without your phone. They will not be shown again.", "احفظ هذه الرموز العشرة بأمان: يسمح كل منها بتسجيل دخول واحد دون هاتف. لن تُعرض مرة أخرى."],
+  "mfa.download": ["Télécharger les codes", "Codes downloaden", "Download codes", "تنزيل الرموز"],
+  "mfa.disable": ["Désactiver", "Uitschakelen", "Disable", "تعطيل"],
+  "mfa.enabled": ["Double authentification activée.", "Tweestapsverificatie ingeschakeld.", "Two-factor authentication enabled.", "تم تفعيل المصادقة الثنائية."],
+  "mfa.disabled": ["Double authentification désactivée.", "Tweestapsverificatie uitgeschakeld.", "Two-factor authentication disabled.", "تم تعطيل المصادقة الثنائية."],
+  "auth.loginAgain": ["Mot de passe modifié. Connectez-vous avec votre nouveau mot de passe et votre code.", "Wachtwoord gewijzigd. Meld je aan met je nieuwe wachtwoord en je code.", "Password changed. Sign in with your new password and your code.", "تم تغيير كلمة المرور. سجّل الدخول بكلمة المرور الجديدة والرمز."],
+  "account.revoke": ["Déconnecter", "Afmelden", "Sign out", "تسجيل الخروج"],
+  "account.lastSeen": ["vu le {date}", "gezien op {date}", "seen {date}", "شوهد في {date}"],
+  "account.data": ["Vos données", "Je gegevens", "Your data", "بياناتك"],
+  "account.exportIntro": ["Téléchargez une archive de votre compte : profil, préférences, projets et historique, nuanciers, images sources et fichiers exportés.", "Download een archief van je account: profiel, voorkeuren, projecten en geschiedenis, kleurkaarten, bronafbeeldingen en geëxporteerde bestanden.", "Download an archive of your account: profile, preferences, projects and history, thread charts, source images and exported files.", "نزّل أرشيفًا لحسابك: الملف الشخصي والتفضيلات والمشاريع والسجل وبطاقات الألوان والصور المصدر والملفات المصدّرة."],
+  "account.export": ["Exporter mes données", "Mijn gegevens exporteren", "Export my data", "تصدير بياناتي"],
+  "account.deleteTitle": ["Supprimer mon compte", "Mijn account verwijderen", "Delete my account", "حذف حسابي"],
+  "account.deleteIntro": ["Suppression définitive du compte, des projets, des versions et des fichiers. Exportez vos données avant si vous souhaitez les garder.", "Definitieve verwijdering van account, projecten, versies en bestanden. Exporteer eerst je gegevens als je ze wilt bewaren.", "Permanent deletion of the account, projects, versions and files. Export your data first if you want to keep it.", "حذف نهائي للحساب والمشاريع والنسخ والملفات. صدّر بياناتك أولًا إن أردت الاحتفاظ بها."],
+  "account.deleteConfirm": ["Saisissez SUPPRIMER pour confirmer", "Typ SUPPRIMER om te bevestigen", "Type SUPPRIMER to confirm", "اكتب SUPPRIMER للتأكيد"],
+  "account.deleteGo": ["Supprimer définitivement", "Definitief verwijderen", "Delete permanently", "حذف نهائي"],
+};
+for (const [k, v] of Object.entries(COMMON_EXTRA)) (["fr", "nl", "en", "ar"] as const).forEach((l, i) => (COMMON[l][k] = v[i]));
+
 type TFn = (key: string, vars?: Record<string, string | number>) => string;
 interface I18nCtx {
   lang: Lang;

@@ -11,7 +11,7 @@ import { audit } from "../lib/audit.js";
 import { SecretBox } from "../lib/secretbox.js";
 import { newTotpSecret, otpauthUri, verifyTotp } from "../lib/totp.js";
 import { zip } from "../lib/zip.js";
-import { SESSION_COOKIE } from "../plugins/auth.js";
+import { sessionCookieName } from "../plugins/auth.js";
 
 const Code = z.string().trim().regex(/^\d{6}$/, { error: "Code à 6 chiffres attendu." });
 const RecoveryCode = z.string().trim().toUpperCase().regex(/^[A-Z0-9]{5}-[A-Z0-9]{5}$/, { error: "Code de secours invalide." });
@@ -98,7 +98,7 @@ export default async function accountRoutes(app: FastifyInstance) {
     const { rows } = await db.query("DELETE FROM sessions WHERE id = $1 AND user_id = $2 RETURNING token_hash = $3 AS current", [id, u.id, req.sessionHash]);
     if (!rows[0]) throw notFound("Session introuvable.");
     await audit(db, { actorId: u.id, action: "account.session_revoked", subject: `user:${u.id}`, ip: req.ip, details: { session: id } });
-    if (rows[0].current) reply.clearCookie(SESSION_COOKIE, { path: "/" });
+    if (rows[0].current) reply.clearCookie(sessionCookieName(cfg.secureCookies), { path: "/", secure: cfg.secureCookies });
     return { ok: true, current: rows[0].current };
   });
 
@@ -270,7 +270,7 @@ export default async function accountRoutes(app: FastifyInstance) {
         req.log.error({ key: k, err: e }, "fichier non supprimé du stockage");
       }
     }
-    reply.clearCookie(SESSION_COOKIE, { path: "/" });
+    reply.clearCookie(sessionCookieName(cfg.secureCookies), { path: "/", secure: cfg.secureCookies });
     return { deleted: true, filesRemoved: removed };
   });
 }

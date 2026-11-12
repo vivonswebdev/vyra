@@ -23,7 +23,8 @@ const Env = z.object({
   MAIL_TRANSPORT: z.enum(["outbox", "brevo"]).default("outbox"),
   MAIL_FROM: z.string().default("VYRA <no-reply@vyra.invalid>"),
   BREVO_API_KEY: z.string().optional(),
-  PAYMENTS_PROVIDER: z.enum(["sandbox", "stripe"]).default("sandbox"),
+  /** Paiements (VYRA Market, lots 5 à 7) : « none » tant que le Market n'est pas ouvert. */
+  PAYMENTS_PROVIDER: z.enum(["none", "sandbox", "stripe"]).default("none"),
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
   SESSION_DAYS: z.coerce.number().int().min(1).max(90).default(30),
@@ -59,7 +60,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
   };
   if (cfg.isProd) {
     const problems: string[] = [];
-    if (cfg.PAYMENTS_PROVIDER !== "stripe") problems.push("PAYMENTS_PROVIDER doit valoir « stripe » en production (le bac à sable est interdit).");
+    if (cfg.PAYMENTS_PROVIDER === "sandbox") problems.push("PAYMENTS_PROVIDER=sandbox est interdit en production (aucun argent réel ne circule).");
     if (cfg.PAYMENTS_PROVIDER === "stripe" && (!cfg.STRIPE_SECRET_KEY || !cfg.STRIPE_WEBHOOK_SECRET))
       problems.push("STRIPE_SECRET_KEY et STRIPE_WEBHOOK_SECRET sont requis.");
     if (cfg.MAIL_TRANSPORT === "outbox") problems.push("MAIL_TRANSPORT doit être un vrai transport (brevo) en production.");

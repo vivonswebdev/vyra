@@ -48,6 +48,8 @@ interface Props {
   drawColor: number;
   onCommit: (fn: (d: Design) => Design) => void;
   marker: Point[] | null;
+  /** Image source superposée sous les points (comportement v0.2 : 45 % sur le rectangle du motif). */
+  overlay?: HTMLImageElement | null;
   newObjectName: (kind: "rect" | "ellipse" | "pen") => string;
   handle: Ref<CanvasHandle>;
 }
@@ -185,6 +187,12 @@ export function StitchCanvas(props: Props) {
     ctx.lineWidth = Math.max(3, 2.2 * scale);
     ctx.strokeRect(X(r.x) - ctx.lineWidth / 2, Y(r.y) - ctx.lineWidth / 2, r.w * scale + ctx.lineWidth, r.h * scale + ctx.lineWidth);
 
+    if (props.overlay && design && props.overlay.complete) {
+      ctx.globalAlpha = 0.45;
+      ctx.drawImage(props.overlay, ox, oy, design.widthMm * scale, design.heightMm * scale);
+      ctx.globalAlpha = 1;
+    }
+
     // Plan de couture (avec aperçu de déplacement sans recalcul)
     if (plan) {
       let p = plan;
@@ -256,7 +264,7 @@ export function StitchCanvas(props: Props) {
         ctx.stroke();
       }
     }
-  }, [design, plan, view, size, drag, selection, tool, display, upto, marker, hoopRect]);
+  }, [design, plan, view, size, drag, selection, tool, display, upto, marker, hoopRect, props.overlay]);
 
   // ------------------------------------------------------------ Interactions
 

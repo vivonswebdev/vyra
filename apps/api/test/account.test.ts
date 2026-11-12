@@ -224,3 +224,20 @@ describe("suppression du compte", () => {
     expect((await c.del("/api/me", { password: PW, confirm: "SUPPRIMER", code: codeAt(secret, step + 1) })).status).toBe(200);
   });
 });
+
+describe("cookie de session en HTTPS", () => {
+  it("porte le préfixe __Host-, Secure, HttpOnly, SameSite=Lax, sans domaine", async () => {
+    const { buildApp } = await import("../src/app.js");
+    const { loadConfig } = await import("../src/config.js");
+    const cfg = loadConfig({ NODE_ENV: "test" } as any, { DATABASE_URL: "unused", STORAGE_DIR: ctx.storageDir, LOG_LEVEL: "silent", PUBLIC_URL: "https://studio.vyra.example", AUTH_RATE_LIMIT: 10_000 } as any);
+    const app = await buildApp({ cfg, db: ctx.db });
+    const r = await app.inject({ method: "POST", url: "/api/auth/signup", headers: { "x-vyra-client": "web" }, payload: { email: "https@example.com", password: PW, displayName: "H", acceptTerms: true } });
+    const ck = r.cookies.find((c) => c.name === "__Host-vyra_session")!;
+    expect(ck).toBeTruthy();
+    expect(ck).toMatchObject({ secure: true, httpOnly: true, sameSite: "Lax", path: "/" });
+    expect(ck.domain).toBeUndefined();
+    const me = await app.inject({ method: "GET", url: "/api/auth/me", headers: { cookie: `__Host-vyra_session=${ck.value}` } });
+    expect(me.json().user.email).toBe("https@example.com");
+    await app.close();
+  });
+});

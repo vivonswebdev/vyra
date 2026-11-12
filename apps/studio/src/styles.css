@@ -74,7 +74,7 @@
 }
 .new-grid {
   display: grid;
-  grid-template-columns: 2fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 12px;
 }
 .dropzone,
@@ -663,4 +663,70 @@
 }
 .editor.mobile .ed-top .btn {
   padding: 0 10px;
+}
+
+/* ---------------------------------------------------------------- Fiche de préparation */
+.prep-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.prep-head {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+.prep-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 20px;
+  align-items: start;
+}
+.prep-grid canvas {
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.prep-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+.prep-table th,
+.prep-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 6px 8px;
+  text-align: start;
+}
+@media (max-width: 800px) {
+  .prep-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  :root {
+    --bg: #fff;
+    --text: #000;
+    --line: #bbb;
+  }
+  .page {
+    max-width: none;
+    padding: 0;
+  }
+}
+.chart-box {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.chart-match {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12.5px;
+  flex-wrap: wrap;
 }

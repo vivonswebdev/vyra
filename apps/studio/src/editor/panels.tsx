@@ -2,6 +2,8 @@
 // en une étape d'historique ; aucune commande n'est décorative.
 import { useEffect, useMemo, useState } from "react";
 import {
+  matchChartEntries,
+  PEC_CHART,
   findMachine,
   MACHINES,
   nearestPecThread,
@@ -25,7 +27,7 @@ import {
 } from "@vyra/engine";
 import { planToPngBlob } from "@vyra/engine/browser";
 import registry from "@vyra/engine/fixtures/xe1-essais.json";
-import { ConfirmDialog, downloadUrl, get, post, saveBlob, useErrorText, useI18n, useToast, type Lang } from "@vyra/ui";
+import { ConfirmDialog, del, downloadUrl, get, post, saveBlob, useErrorText, useI18n, useToast, type Lang } from "@vyra/ui";
 import type { ExportDTO, ProjectDTO, ProjectVersionDTO } from "@vyra/shared";
 import type { Editor } from "./useEditor.js";
 
@@ -326,6 +328,135 @@ export function ThreadsPanel({ ed, dimColor, setDimColor }: { ed: Editor; dimCol
       <p className="small muted" style={{ marginTop: 12 }}>
         {t("th.chartNote")}
       </p>
+      <ChartsSection ed={ed} />
+    </div>
+  );
+}
+
+interface UserChart {
+  id: string;
+  brand: string;
+  product: string;
+  status: string;
+  source: string;
+  sourceUrl: string | null;
+  entries: { code: string; name: string; rgb: string }[];
+}
+
+function ChartsSection({ ed }: { ed: Editor }) {
+  const { t } = useI18n();
+  const toast = useToast();
+  const errText = useErrorText();
+  const [charts, setCharts] = useState<UserChart[]>([]);
+  const [selected, setSelected] = useState("pec");
+  const [error, setError] = useState("");
+  const load = () => get<{ charts: UserChart[] }>("/api/thread-charts").then((r) => setCharts(r.charts), () => {});
+  useEffect(() => {
+    load();
+  }, []);
+  const chart = selected === "pec" ? (PEC_CHART as any) : charts.find((c) => c.id === selected);
+  const d = ed.design;
+  if (!d) return null;
+  return (
+    <div className="chart-box" data-testid="charts">
+      <h3>{t("ch.title")}</h3>
+      <label className="field">
+        <span>{t("ch.choose")}</span>
+        <select className="input" value={selected} onChange={(e) => setSelected(e.target.value)} data-testid="chart-select">
+          <option value="pec">{PEC_CHART.brand} — {PEC_CHART.product}</option>
+          {charts.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.brand} — {c.product} ({c.status})
+            </option>
+          ))}
+        </select>
+      </label>
+      {chart && (
+        <p className="small muted">
+          {chart.source}
+          {chart.sourceUrl && (
+            <>
+              {" · "}
+              <a href={chart.sourceUrl} target="_blank" rel="noreferrer noopener">
+                {new URL(chart.sourceUrl).hostname}
+              </a>
+            </>
+          )}
+        </p>
+      )}
+      {chart &&
+        d.threads.map((th, i) => {
+          const m = matchChartEntries(th.rgb, { ...chart, entries: chart.entries } as any, 1)[0];
+          if (!m) return null;
+          return (
+            <div key={i} className="chart-match">
+              <span className="sw" style={{ background: th.rgb }} /> {th.name} →<span className="sw" style={{ background: m.entry.rgb }} />
+              <strong>{m.entry.code}</strong> {m.entry.name} <span className="muted">({t("ch.delta", { d: m.delta.toFixed(0) })})</span>
+              <button
+                className="link"
+                onClick={() => ed.commit((des) => ({ ...des, threads: des.threads.map((x, k) => (k === i ? { rgb: m.entry.rgb, name: m.entry.name || m.entry.code, brand: chart.brand, code: m.entry.code } : x)) }))}
+              >
+                {t("th.usePec")}
+              </button>
+            </div>
+          );
+        })}
+      {selected !== "pec" && (
+        <button
+          className="btn sm danger"
+          style={{ marginTop: 8 }}
+          onClick={async () => {
+            await del(`/api/thread-charts/${selected}`);
+            setSelected("pec");
+            load();
+          }}
+        >
+          {t("ch.delete")}
+        </button>
+      )}
+      <details style={{ marginTop: 10 }}>
+        <summary>{t("ch.import")}</summary>
+        {error && <div className="alert error">{error}</div>}
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            const f = new FormData(e.currentTarget);
+            const file = f.get("csv") as File;
+            setError("");
+            try {
+              const r = await post<{ chart: UserChart }>("/api/thread-charts", {
+                brand: f.get("brand"),
+                product: f.get("product"),
+                status: f.get("status"),
+                source: f.get("source"),
+                sourceUrl: f.get("sourceUrl") || "",
+                csv: file && file.size ? await file.text() : "",
+              });
+              toast(t("ch.imported", { n: r.chart.entries.length }));
+              await load();
+              setSelected(r.chart.id);
+              (e.target as HTMLFormElement).reset();
+            } catch (err) {
+              setError(errText(err));
+            }
+          }}
+        >
+          <label className="field"><span>{t("ch.brand")}</span><input className="input" name="brand" maxLength={120} required /></label>
+          <label className="field"><span>{t("ch.product")}</span><input className="input" name="product" maxLength={160} required /></label>
+          <label className="field">
+            <span>{t("ch.status")}</span>
+            <select className="input" name="status" defaultValue="approximatif">
+              <option value="officiel">{t("ch.official")}</option>
+              <option value="approximatif">{t("ch.approx")}</option>
+              <option value="utilisateur">{t("ch.user")}</option>
+            </select>
+          </label>
+          <label className="field"><span>{t("ch.source")}</span><input className="input" name="source" maxLength={500} required /></label>
+          <label className="field"><span>{t("ch.url")}</span><input className="input" name="sourceUrl" type="url" maxLength={500} /></label>
+          <label className="field"><span>{t("ch.file")}</span><input name="csv" type="file" accept=".csv,text/csv" required data-testid="chart-file" /></label>
+          <button className="btn sm">{t("ch.import")}</button>
+        </form>
+      </details>
     </div>
   );
 }
@@ -532,6 +663,10 @@ export function ExportPanel({ ed }: { ed: Editor }) {
       <button className="btn primary block" disabled={!a || a.qc.blocking || busy} onClick={run} data-testid="export-run">
         {busy ? t("ed.saving") : t("ex.go")}
       </button>
+      <h3 style={{ marginTop: 16 }}>{t("prep.title")}</h3>
+      <a className="btn sm" href={`${import.meta.env.BASE_URL}p/${ed.id}/fiche`} target="_blank" rel="noopener" data-testid="open-prep">
+        {t("prep.open")}
+      </a>
       <h3 style={{ marginTop: 16 }}>{t("ex.previews")}</h3>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button className="btn sm" disabled={!a} onClick={() => a && saveBlob(new Blob([planToSvg(a.plan, ed.name)], { type: "image/svg+xml" }), ed.name + "-apercu.svg")}>

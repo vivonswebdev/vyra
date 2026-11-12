@@ -9,6 +9,8 @@ import { forbidden, unauthorized } from "../lib/errors.js";
 import { hasRole, type Role } from "@vyra/shared";
 
 export const SESSION_COOKIE = "vyra_session";
+/** En HTTPS, préfixe __Host- : le navigateur exige Secure, Path=/ et aucun domaine (cookie non partageable). */
+export const sessionCookieName = (secure: boolean) => (secure ? "__Host-" + SESSION_COOKIE : SESSION_COOKIE);
 
 export interface SessionUser {
   id: string;
@@ -57,12 +59,13 @@ export function toSessionUser(r: Record<string, any>): SessionUser {
 export default fp(async function authPlugin(app: FastifyInstance) {
   const { db, cfg } = app;
   const maxAge = cfg.SESSION_DAYS * 24 * 3600;
+  const COOKIE = sessionCookieName(cfg.secureCookies);
 
   app.decorateRequest("user", null);
   app.decorateRequest("sessionHash", null);
 
   app.addHook("onRequest", async (req) => {
-    const token = req.cookies[SESSION_COOKIE];
+    const token = req.cookies[COOKIE];
     if (!token || token.length > 200) return;
     const hash = tokenHash(token);
     const { rows } = await db.query(
@@ -100,7 +103,7 @@ export default fp(async function authPlugin(app: FastifyInstance) {
        VALUES ($1, $2, now() + make_interval(days => $3), $4, $5)`,
       [hash, userId, cfg.SESSION_DAYS, req.ip, String(req.headers["user-agent"] ?? "").slice(0, 300)],
     );
-    reply.setCookie(SESSION_COOKIE, token, {
+    reply.setCookie(COOKIE, token, {
       path: "/",
       httpOnly: true,
       sameSite: "lax",
@@ -111,6 +114,6 @@ export default fp(async function authPlugin(app: FastifyInstance) {
 
   app.decorate("endSession", async (reply: FastifyReply, req: FastifyRequest) => {
     if (req.sessionHash) await db.query("DELETE FROM sessions WHERE token_hash = $1", [req.sessionHash]);
-    reply.clearCookie(SESSION_COOKIE, { path: "/" });
+    reply.clearCookie(COOKIE, { path: "/", secure: cfg.secureCookies });
   });
 });

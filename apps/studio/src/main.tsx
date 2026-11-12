@@ -22,6 +22,7 @@ import { STUDIO_DICTS } from "./i18n.js";
 import Dashboard, { StudioBar } from "./pages/Dashboard.js";
 
 const Editor = lazy(() => import("./pages/Editor.js"));
+const PrepSheet = lazy(() => import("./pages/PrepSheet.js"));
 
 function AccountPage() {
   const { t } = useI18n();
@@ -54,6 +55,16 @@ function App() {
           <RequireAuth>
             <Suspense fallback={<div className="auth-shell"><Spinner /></div>}>
               <Editor />
+            </Suspense>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/p/:id/fiche"
+        element={
+          <RequireAuth>
+            <Suspense fallback={<div className="auth-shell"><Spinner /></div>}>
+              <PrepSheet />
             </Suspense>
           </RequireAuth>
         }

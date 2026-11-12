@@ -16,6 +16,7 @@ import authPlugin from "./plugins/auth.js";
 import authRoutes from "./routes/auth.js";
 import projectRoutes from "./routes/projects.js";
 import accountRoutes from "./routes/account.js";
+import chartRoutes from "./routes/charts.js";
 import devRoutes from "./routes/dev.js";
 import { EnginePool } from "./engine/pool.js";
 
@@ -114,6 +115,7 @@ export async function buildApp({ cfg, db, storage }: AppDeps): Promise<FastifyIn
 
   await app.register(authRoutes);
   await app.register(accountRoutes);
+  await app.register(chartRoutes);
   await app.register(projectRoutes);
   if (!cfg.isProd && cfg.DEV_MAILBOX) await app.register(devRoutes);
 

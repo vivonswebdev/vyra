@@ -90,6 +90,28 @@ function EditorInner({ project }: { project: ProjectDTO }) {
   const [marker, setMarker] = useState<Point[] | null>(null);
   const [space, setSpace] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [showSource, setShowSource] = useState(false);
+  const [overlay, setOverlay] = useState<HTMLImageElement | null>(null);
+  const hasSource = !!(ed.settings.sourceFileId || ed.settings.demoMotif);
+  useEffect(() => {
+    if (!showSource || !hasSource) return setOverlay(null);
+    let url = "";
+    let cancelled = false;
+    (async () => {
+      if (ed.settings.sourceFileId) {
+        const res = await fetch(`/api/files/${ed.settings.sourceFileId}`, { credentials: "same-origin" });
+        if (!res.ok) return;
+        url = URL.createObjectURL(await res.blob());
+      } else url = `${import.meta.env.BASE_URL}motifs/${ed.settings.demoMotif}.png`;
+      const img = new Image();
+      img.onload = () => !cancelled && setOverlay(img);
+      img.src = url;
+    })();
+    return () => {
+      cancelled = true;
+      if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+    };
+  }, [showSource, hasSource, ed.settings.sourceFileId, ed.settings.demoMotif]);
   const expert = (user?.preferences?.uiMode as string) === "expert";
   const machine = findMachine(ed.machineId);
   const hoop = machine.hoops.find((h) => h.id === ed.hoopId) ?? machine.hoops[0] ?? null;
@@ -355,6 +377,7 @@ function EditorInner({ project }: { project: ProjectDTO }) {
           drawColor={Math.min(drawColor, Math.max(0, (ed.design?.threads.length ?? 1) - 1))}
           onCommit={ed.commit}
           marker={marker}
+          overlay={overlay}
           newObjectName={newObjectName}
         />
         <div className="view-opts">
@@ -366,6 +389,12 @@ function EditorInner({ project }: { project: ProjectDTO }) {
             <input type="checkbox" checked={display.showJumps} onChange={(e) => setDisplay((d) => ({ ...d, showJumps: e.target.checked }))} />
             <span>{t("v.jumps")}</span>
           </label>
+          {hasSource && (
+            <label className="check">
+              <input type="checkbox" checked={showSource} onChange={(e) => setShowSource(e.target.checked)} data-testid="show-source" />
+              <span>{t("v.source")}</span>
+            </label>
+          )}
           {expert && (
             <select className="input sm" aria-label={t("v.mode")} value={display.mode} onChange={(e) => setDisplay((d) => ({ ...d, mode: e.target.value as Display["mode"] }))}>
               {(["thread", "directions", "density", "types"] as const).map((m) => (

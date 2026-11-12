@@ -207,6 +207,7 @@ function NewDesignDialog({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState("");
   const [over, setOver] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+  const projInput = useRef<HTMLInputElement>(null);
 
   const create = async (body: { name: string; design: Design | null; settings: Record<string, unknown> }, source?: File) => {
     const r = await post<{ project: ProjectDTO }>("/api/projects", body);
@@ -262,11 +263,31 @@ function NewDesignDialog({ onClose }: { onClose: () => void }) {
     }
   };
 
+  const fromProjectFile = async (file: File) => {
+    setError("");
+    if (file.size > 12 * 1024 * 1024) return setError(t("new.tooBig"));
+    let design: Design;
+    try {
+      design = JSON.parse(await file.text());
+      if (!design || !Array.isArray(design.objects) || !Array.isArray(design.threads)) throw new Error();
+    } catch {
+      return setError(t("new.badProject"));
+    }
+    setBusy(true);
+    try {
+      const projName = (name.trim() || design.name || file.name.replace(/\.stitch\.json$|\.json$/i, "")).slice(0, 120);
+      await create({ name: projName, design, settings: { machineId: "brother-xe1", hoopId: "sa439s", importedFrom: file.name.slice(0, 200) } });
+    } catch (e) {
+      setError(errText(e));
+      setBusy(false);
+    }
+  };
+
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
     setOver(false);
     const f = e.dataTransfer.files?.[0];
-    if (f) fromFile(f);
+    if (f) (/\.json$/i.test(f.name) ? fromProjectFile(f) : fromFile(f));
   };
 
   return (
@@ -298,6 +319,14 @@ function NewDesignDialog({ onClose }: { onClose: () => void }) {
                 {t("new.fromImage")}
               </button>
               <input ref={input} type="file" accept={ACCEPT} hidden data-testid="file-input" onChange={(e) => e.target.files?.[0] && fromFile(e.target.files[0])} />
+            </div>
+            <div className="blank-card">
+              <h3>{t("new.importProject")}</h3>
+              <p className="small muted">{t("new.importHint")}</p>
+              <button className="btn" onClick={() => projInput.current?.click()}>
+                {t("new.importProject")}
+              </button>
+              <input ref={projInput} type="file" accept=".json,application/json" hidden data-testid="project-file-input" onChange={(e) => e.target.files?.[0] && fromProjectFile(e.target.files[0])} />
             </div>
             <div className="blank-card">
               <h3>{t("new.blank")}</h3>
