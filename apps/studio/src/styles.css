@@ -1,0 +1,666 @@
+/* VYRA Studio — mise en page. Bureau ≥ 1 200 px : rail d'outils, calques, zone de travail, panneau.
+   Tablette 768–1 199 px : panneaux en tiroir. Mobile < 768 px : zone de travail plein écran,
+   onglets en bas et feuille de réglages. */
+
+/* ---------------------------------------------------------------- Tableau de bord */
+.dash-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+.dash-head h1 {
+  margin: 0 auto 0 0;
+}
+.dash-head .search {
+  width: min(280px, 100%);
+}
+.empty {
+  text-align: center;
+  padding: 40px 16px;
+}
+.project-grid {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 16px;
+}
+.project-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  display: grid;
+}
+.thumb {
+  aspect-ratio: 4 / 3;
+  background: var(--fabric);
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  padding: 10px;
+}
+.thumb {
+  position: relative;
+  overflow: hidden;
+}
+.thumb img {
+  position: absolute;
+  inset: 10px;
+  width: calc(100% - 20px);
+  height: calc(100% - 20px);
+  object-fit: contain;
+}
+.project-meta {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px 4px;
+}
+.project-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px 12px;
+}
+.new-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 12px;
+}
+.dropzone,
+.blank-card {
+  border: 2px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+  text-align: center;
+}
+.dropzone.over {
+  border-color: var(--copper);
+  background: var(--surface);
+}
+.blank-card {
+  border-style: solid;
+  border-width: 1px;
+}
+.demo-grid {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 10px;
+}
+.demo-grid button {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.demo-grid button:hover {
+  border-color: var(--copper);
+}
+.demo-grid img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+}
+@media (max-width: 640px) {
+  .new-grid {
+    grid-template-columns: 1fr;
+  }
+  .appbar .segmented {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------- Éditeur */
+.editor {
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: 52px 1fr auto;
+  background: var(--bg);
+  overflow: hidden;
+}
+.editor.desktop {
+  grid-template-columns: 52px 250px minmax(0, 1fr) 340px;
+  grid-template-areas: "top top top top" "rail layers stage panel" "sim sim sim sim";
+}
+.editor.tablet {
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  grid-template-rows: 52px minmax(0, 1fr) auto auto;
+  grid-template-areas: "top top top" "rail stage sheet" "tabs tabs tabs" "sim sim sim";
+}
+.editor.mobile {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 52px auto minmax(0, 1fr) auto auto auto;
+  grid-template-areas: "top" "rail" "stage" "sheet" "tabs" "sim";
+}
+.ed-top {
+  grid-area: top;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  min-width: 0;
+}
+.ed-top .spacer {
+  flex: 1;
+}
+.name-input {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  font: 600 16px var(--font-ui);
+  padding: 4px 8px;
+  border-radius: 6px;
+  min-width: 80px;
+  width: 260px;
+  max-width: 34vw;
+}
+.name-input:hover,
+.name-input:focus {
+  border-color: var(--line);
+  background: var(--raised);
+}
+.save-state {
+  font-size: 12.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.save-state.error,
+.save-state.conflict {
+  color: var(--err);
+  font-weight: 600;
+}
+.save-state.saved::before {
+  content: "✓ ";
+  color: var(--ok);
+}
+.toolrail {
+  grid-area: rail;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+  border-inline-end: 1px solid var(--line);
+  background: var(--surface);
+}
+.editor.mobile .toolrail {
+  flex-direction: row;
+  overflow-x: auto;
+  padding: 4px 8px;
+  border-inline-end: 0;
+  border-bottom: 1px solid var(--line);
+}
+.rail-sep {
+  width: 28px;
+  height: 1px;
+  background: var(--line);
+  margin: 4px 0;
+}
+.editor.mobile .rail-sep {
+  width: 1px;
+  height: 28px;
+  margin: 0 4px;
+}
+.draw-color {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: var(--tap);
+  height: var(--tap);
+  cursor: pointer;
+}
+.draw-color select {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.draw-color .sw {
+  width: 22px;
+  height: 22px;
+}
+.sw {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid rgb(0 0 0 / 0.25);
+  vertical-align: middle;
+  flex: none;
+}
+.layers-col {
+  grid-area: layers;
+  border-inline-end: 1px solid var(--line);
+  background: var(--surface);
+  overflow: auto;
+  padding: 10px;
+}
+.col-title {
+  font-size: 16px;
+}
+.stage {
+  grid-area: stage;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+.workspace {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.workspace canvas {
+  display: block;
+}
+.zoom-readout {
+  position: absolute;
+  inset-inline-end: 10px;
+  bottom: 8px;
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+.view-opts {
+  position: absolute;
+  top: 8px;
+  inset-inline-end: 10px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 13px;
+}
+.view-opts .check {
+  margin: 0;
+  font-size: 13px;
+}
+.input.sm {
+  min-height: 28px;
+  padding: 2px 6px;
+  width: auto;
+  font-size: 13px;
+}
+.stage-empty {
+  position: absolute;
+  inset-inline: 20%;
+  top: 40%;
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  pointer-events: none;
+}
+.stage-busy {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgb(246 241 232 / 0.6);
+}
+.panel-col {
+  grid-area: panel;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-inline-start: 1px solid var(--line);
+  background: var(--surface);
+}
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.tabs button {
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  min-height: 32px;
+}
+.tabs button[aria-selected="true"] {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.dot {
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 0 6px;
+  color: var(--bg);
+  background: var(--warn);
+}
+.dot.error {
+  background: var(--err);
+}
+.panel-scroll {
+  overflow: auto;
+  padding: 12px;
+  flex: 1;
+  min-height: 0;
+}
+.bottom-tabs {
+  grid-area: tabs;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+.bottom-tabs .tabs {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  border-bottom: 0;
+}
+.bottom-tabs .tabs button {
+  flex: none;
+  min-height: var(--tap);
+}
+/* Feuille de réglages : intégrée à la grille, elle réduit la zone de travail sans masquer
+   les onglets ni la simulation. */
+.sheet {
+  grid-area: sheet;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: min(46dvh, 460px);
+}
+.editor.tablet .sheet {
+  height: auto;
+  width: min(360px, 46vw);
+  border-top: 0;
+  border-inline-start: 1px solid var(--line);
+}
+.sheet-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.simbar {
+  grid-area: sim;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  min-width: 0;
+}
+.simbar input[type="range"] {
+  flex: 1;
+  min-width: 80px;
+  accent-color: var(--accent);
+}
+.simbar .stats {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 48%;
+}
+.sim-count {
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- Panneaux */
+.panel-body h3 {
+  margin-top: 8px;
+}
+.panel-body hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 14px 0;
+}
+.numfield {
+  display: grid;
+  grid-template-columns: 1fr 120px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 13.5px;
+}
+.numfield-input {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.numfield .unit {
+  font-size: 12px;
+  color: var(--muted);
+  width: 26px;
+}
+.row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.row2 .numfield {
+  grid-template-columns: 1fr;
+}
+.layers ol {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+  display: grid;
+  gap: 4px;
+}
+.layers-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.layers li {
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+  border: 1px solid transparent;
+}
+.layers li.active {
+  border-color: var(--copper);
+  background: var(--raised);
+}
+.layer-main {
+  flex: 1;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  padding: 6px;
+  cursor: pointer;
+  min-width: 0;
+}
+.layer-name {
+  display: grid;
+  min-width: 0;
+  font-size: 13.5px;
+}
+.layer-name small {
+  font-size: 11.5px;
+}
+.idx {
+  font-size: 11px;
+  color: var(--muted);
+  width: 18px;
+}
+.layer-actions {
+  display: flex;
+}
+.icon-btn.sm {
+  width: 28px;
+  height: 28px;
+  font-size: 13px;
+}
+.thread-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.thread-row.focus {
+  background: var(--raised);
+}
+.thread-row input[type="color"] {
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px;
+  background: var(--raised);
+}
+.thread-fields {
+  display: grid;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.link {
+  border: 0;
+  background: none;
+  color: var(--copper);
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+.kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  font-size: 13.5px;
+  margin: 10px 0;
+}
+.kv dt {
+  color: var(--muted);
+}
+.kv dd {
+  margin: 0;
+}
+.issues,
+.versions,
+.exports,
+.strategy {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+.issue {
+  width: 100%;
+  display: grid;
+  gap: 3px;
+  text-align: start;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.issue:disabled {
+  cursor: default;
+}
+.issue.error {
+  border-color: var(--err);
+}
+.versions li,
+.exports li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13.5px;
+}
+.strategy li {
+  font-size: 13px;
+}
+.formats {
+  border: 0;
+  padding: 0;
+  margin: 0 0 8px;
+}
+.formats legend {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+/* Barre supérieure sur mobile : le nom se réduit, l'état d'enregistrement devient une pastille. */
+.editor.mobile .ed-top {
+  gap: 4px;
+  padding: 0 6px;
+}
+.editor.mobile .name-input {
+  flex: 1 1 60px;
+  width: auto;
+  max-width: none;
+  min-width: 0;
+}
+.editor.mobile .ed-top .spacer {
+  display: none;
+}
+.editor.mobile .save-state {
+  font-size: 0;
+}
+.editor.mobile .save-state::before {
+  font-size: 15px;
+  content: "•";
+  color: var(--warn);
+}
+.editor.mobile .save-state.saved::before {
+  content: "✓";
+  color: var(--ok);
+}
+.editor.mobile .save-state.error::before,
+.editor.mobile .save-state.conflict::before {
+  content: "!";
+  color: var(--err);
+}
+.editor.mobile .ed-top .btn {
+  padding: 0 10px;
+}

@@ -5,6 +5,7 @@ export default defineConfig({
     projects: [
       { test: { name: "engine", include: ["packages/engine/test/**/*.test.ts"], testTimeout: 120_000 } },
       { test: { name: "shared", include: ["packages/shared/test/**/*.test.ts"] } },
+      { test: { name: "web", include: ["apps/studio/test/**/*.test.ts"] } },
       {
         test: {
           name: "api",

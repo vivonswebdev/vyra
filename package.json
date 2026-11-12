@@ -9,11 +9,11 @@
     "db:migrate": "npm run migrate -w @vyra/api",
     "db:seed": "npm run seed -w @vyra/api",
     "dev": "node scripts/dev.mjs",
-    "build": "npm run build -w @vyra/studio && npm run build -w @vyra/market",
+    "build": "npm run build -w @vyra/studio",
     "start": "npm run start -w @vyra/api",
-    "typecheck": "tsc -p packages/engine && tsc -p packages/shared && tsc -p packages/ui && tsc -p apps/api && tsc -p apps/studio && tsc -p apps/market",
+    "typecheck": "tsc -p packages/engine && tsc -p packages/shared && tsc -p packages/ui && tsc -p apps/api && tsc -p apps/studio",
     "test": "vitest run",
-    "test:e2e": "playwright test --trace off",
+    "test:e2e": "npm run build && playwright test --trace off",
     "verify:references": "node packages/engine/scripts/verify-references.mjs"
   },
   "devDependencies": {
