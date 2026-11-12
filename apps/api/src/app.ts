@@ -11,6 +11,7 @@ import type { Config } from "./config.js";
 import type { Db } from "./db/pool.js";
 import { HttpError } from "./lib/errors.js";
 import { LocalStorage, type Storage } from "./lib/storage.js";
+import { S3Storage } from "./lib/s3storage.js";
 import authPlugin from "./plugins/auth.js";
 import authRoutes from "./routes/auth.js";
 import projectRoutes from "./routes/projects.js";
@@ -44,7 +45,7 @@ export async function buildApp({ cfg, db, storage }: AppDeps): Promise<FastifyIn
 
   app.decorate("db", db);
   app.decorate("cfg", cfg);
-  app.decorate("storage", storage ?? new LocalStorage(cfg.STORAGE_DIR));
+  app.decorate("storage", storage ?? createStorage(cfg));
   const engine = new EnginePool({ size: cfg.ENGINE_WORKERS, timeoutMs: cfg.ENGINE_TIMEOUT_MS, maxQueue: cfg.ENGINE_QUEUE, maxMemoryMb: cfg.ENGINE_MEMORY_MB });
   app.decorate("engine", engine);
   app.addHook("onClose", async () => engine.close());
@@ -147,4 +148,18 @@ export async function buildApp({ cfg, db, storage }: AppDeps): Promise<FastifyIn
   }
 
   return app;
+}
+
+export function createStorage(cfg: Config): Storage {
+  if (cfg.STORAGE_DRIVER === "s3")
+    return new S3Storage({
+      endpoint: cfg.S3_ENDPOINT,
+      region: cfg.S3_REGION,
+      bucket: cfg.S3_BUCKET!,
+      prefix: cfg.S3_PREFIX,
+      accessKeyId: cfg.S3_ACCESS_KEY_ID!,
+      secretAccessKey: cfg.S3_SECRET_ACCESS_KEY!,
+      serverSideEncryption: cfg.S3_SSE === "AES256" ? "AES256" : undefined,
+    });
+  return new LocalStorage(cfg.STORAGE_DIR);
 }

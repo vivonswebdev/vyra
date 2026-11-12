@@ -11,6 +11,15 @@ const Env = z.object({
   DATABASE_URL: z.string().default("postgres://vyra:vyra@127.0.0.1:5432/vyra_dev"),
   PUBLIC_URL: z.string().url().default("http://127.0.0.1:8787"),
   STORAGE_DIR: z.string().default(path.resolve(process.cwd(), "storage")),
+  /** « local » (disque) ou « s3 » (stockage objet privé compatible S3). */
+  STORAGE_DRIVER: z.enum(["local", "s3"]).default("local"),
+  S3_ENDPOINT: z.string().url().optional(),
+  S3_REGION: z.string().default("fr-par"),
+  S3_BUCKET: z.string().optional(),
+  S3_PREFIX: z.string().optional(),
+  S3_ACCESS_KEY_ID: z.string().optional(),
+  S3_SECRET_ACCESS_KEY: z.string().optional(),
+  S3_SSE: z.enum(["none", "AES256"]).default("none"),
   MAIL_TRANSPORT: z.enum(["outbox", "brevo"]).default("outbox"),
   MAIL_FROM: z.string().default("VYRA <no-reply@vyra.invalid>"),
   BREVO_API_KEY: z.string().optional(),
@@ -57,6 +66,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
     if (cfg.MAIL_TRANSPORT === "brevo" && !cfg.BREVO_API_KEY) problems.push("BREVO_API_KEY est requis.");
     if (!cfg.secureCookies) problems.push("PUBLIC_URL doit être en https en production.");
     if (!parsed.SECRET_KEY || Buffer.from(parsed.SECRET_KEY, "base64").length !== 32) problems.push("SECRET_KEY (32 octets en base64) est requis en production : openssl rand -base64 32.");
+    if (cfg.STORAGE_DRIVER === "s3" && (!cfg.S3_BUCKET || !cfg.S3_ACCESS_KEY_ID || !cfg.S3_SECRET_ACCESS_KEY))
+      problems.push("STORAGE_DRIVER=s3 exige S3_BUCKET, S3_ACCESS_KEY_ID et S3_SECRET_ACCESS_KEY.");
     if (cfg.DEV_MAILBOX) problems.push("DEV_MAILBOX est interdit en production (il expose les liens de connexion).");
     if (problems.length) throw new Error("Configuration de production refusée :\n- " + problems.join("\n- "));
   }
