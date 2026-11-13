@@ -40,18 +40,33 @@ jobs:
           "$RUNNER_TEMP/clamd-test" --config-file="$RUNNER_TEMP/clamav/clamd.conf"
           for i in $(seq 1 30); do printf 'zPING\0' | timeout 2 nc -q1 127.0.0.1 3310 | grep -q PONG && break; sleep 1; done
           printf 'zPING\0' | timeout 2 nc -q1 127.0.0.1 3310 | grep -q PONG
+      # MinIO ne distribue plus de binaire prêt à l'emploi (dl.min.io répond 410) : compilation de la même
+      # révision que celle utilisée pour les essais locaux, mise en cache entre les exécutions.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: false
+      - name: Cache des serveurs de test compilés
+        id: testsrv
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin/minio
+          key: minio-v0.0.0-20260212201848-7aac2a2c5b7c-go1.24
+      - name: Compilation de MinIO (révision figée)
+        if: steps.testsrv.outputs.cache-hit != 'true'
+        run: go install github.com/minio/minio@v0.0.0-20260212201848-7aac2a2c5b7c
       - name: Serveur S3 réel (MinIO) pour les tests de stockage
         run: |
-          curl -sSfL -o "$RUNNER_TEMP/minio" https://dl.min.io/server/minio/release/linux-amd64/minio
-          chmod +x "$RUNNER_TEMP/minio"
           mkdir -p "$RUNNER_TEMP/minio-data"
-          MINIO_ROOT_USER=vyra-ci-admin MINIO_ROOT_PASSWORD=vyra-ci-secret-123 nohup "$RUNNER_TEMP/minio" server "$RUNNER_TEMP/minio-data" --address 127.0.0.1:9000 > "$RUNNER_TEMP/minio.log" 2>&1 &
-          for i in $(seq 1 30); do curl -sf http://127.0.0.1:9000/minio/health/live && break; sleep 1; done
-      - name: Serveur SMTP de test (Mailpit)
+          MINIO_ROOT_USER=vyra-ci-admin MINIO_ROOT_PASSWORD=vyra-ci-secret-123 nohup ~/go/bin/minio server "$RUNNER_TEMP/minio-data" --address 127.0.0.1:9000 > "$RUNNER_TEMP/minio.log" 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:9000/minio/health/live && break; sleep 1; done
+          curl -sf http://127.0.0.1:9000/minio/health/live || { cat "$RUNNER_TEMP/minio.log"; exit 1; }
+      - name: Serveur SMTP de test (Mailpit, version figée)
         run: |
-          curl -sSfL https://github.com/axllent/mailpit/releases/latest/download/mailpit-linux-amd64.tar.gz | tar -xz -C "$RUNNER_TEMP" mailpit
+          curl -sSfL https://github.com/axllent/mailpit/releases/download/v1.33.1/mailpit-linux-amd64.tar.gz | tar -xz -C "$RUNNER_TEMP" mailpit
           nohup "$RUNNER_TEMP/mailpit" --smtp 127.0.0.1:1025 --listen 127.0.0.1:8025 --smtp-auth-allow-insecure --smtp-auth-accept-any > "$RUNNER_TEMP/mailpit.log" 2>&1 &
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:8025/api/v1/messages > /dev/null && break; sleep 1; done
+          curl -sf http://127.0.0.1:8025/api/v1/messages > /dev/null || { cat "$RUNNER_TEMP/mailpit.log"; exit 1; }
       - name: Tests unitaires, API (PostgreSQL), antivirus (ClamAV réel), S3 (MinIO réel), SMTP (Mailpit) et traductions
         run: npm test
         env:
