@@ -14,17 +14,20 @@ export async function isLocked(q: Queryable, email: string): Promise<boolean> {
   return !!rows[0]?.locked_until && new Date(rows[0].locked_until) > new Date();
 }
 
-export async function recordFailure(q: Queryable, email: string): Promise<void> {
-  await q.query(
+/** Enregistre un échec ; renvoie true si cet échec vient de déclencher le verrouillage. */
+export async function recordFailure(q: Queryable, email: string): Promise<boolean> {
+  const r = await q.query(
     `INSERT INTO auth_throttle (key, failures, window_start) VALUES ($1, 1, now())
      ON CONFLICT (key) DO UPDATE SET
        failures = CASE WHEN auth_throttle.window_start < now() - make_interval(mins => $3) THEN 1 ELSE auth_throttle.failures + 1 END,
        window_start = CASE WHEN auth_throttle.window_start < now() - make_interval(mins => $3) THEN now() ELSE auth_throttle.window_start END,
        locked_until = CASE
          WHEN (CASE WHEN auth_throttle.window_start < now() - make_interval(mins => $3) THEN 1 ELSE auth_throttle.failures + 1 END) >= $2
-         THEN now() + make_interval(mins => $4) ELSE auth_throttle.locked_until END`,
+         THEN now() + make_interval(mins => $4) ELSE auth_throttle.locked_until END
+     RETURNING failures`,
     [keyFor(email), LOCK_AFTER, WINDOW_MINUTES, LOCK_MINUTES],
   );
+  return r.rows[0]?.failures === LOCK_AFTER;
 }
 
 export async function clearFailures(q: Queryable, email: string): Promise<void> {

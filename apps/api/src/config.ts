@@ -23,7 +23,9 @@ const Env = z.object({
   /** Téléchargements par URL temporaire signée (S3 uniquement), après contrôle d'accès par l'API. */
   S3_PRESIGNED_DOWNLOADS: z.stringbool().default(false),
   S3_PRESIGN_TTL_SECONDS: z.coerce.number().int().min(5).max(900).default(60),
-  MAIL_TRANSPORT: z.enum(["outbox", "brevo"]).default("outbox"),
+  /** « outbox » (développement : rien n'est envoyé), « smtp » (SMTP_URL) ou « brevo » (API). */
+  MAIL_TRANSPORT: z.enum(["outbox", "smtp", "brevo"]).default("outbox"),
+  SMTP_URL: z.string().optional(),
   MAIL_FROM: z.string().default("VYRA <no-reply@vyra.invalid>"),
   BREVO_API_KEY: z.string().optional(),
   /** Paiements (VYRA Market, lots 5 à 7) : « none » tant que le Market n'est pas ouvert. */
@@ -75,8 +77,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
     if (cfg.PAYMENTS_PROVIDER === "sandbox") problems.push("PAYMENTS_PROVIDER=sandbox est interdit en production (aucun argent réel ne circule).");
     if (cfg.PAYMENTS_PROVIDER === "stripe" && (!cfg.STRIPE_SECRET_KEY || !cfg.STRIPE_WEBHOOK_SECRET))
       problems.push("STRIPE_SECRET_KEY et STRIPE_WEBHOOK_SECRET sont requis.");
-    if (cfg.MAIL_TRANSPORT === "outbox") problems.push("MAIL_TRANSPORT doit être un vrai transport (brevo) en production.");
+    if (cfg.MAIL_TRANSPORT === "outbox") problems.push("MAIL_TRANSPORT doit être un vrai transport (smtp ou brevo) en production.");
     if (cfg.MAIL_TRANSPORT === "brevo" && !cfg.BREVO_API_KEY) problems.push("BREVO_API_KEY est requis.");
+    if (cfg.MAIL_TRANSPORT === "smtp" && !/^smtps?:\/\//.test(cfg.SMTP_URL ?? "")) problems.push("SMTP_URL (smtp:// ou smtps://) est requis.");
     if (!cfg.secureCookies) problems.push("PUBLIC_URL doit être en https en production.");
     if (!parsed.SECRET_KEY || Buffer.from(parsed.SECRET_KEY, "base64").length !== 32) problems.push("SECRET_KEY (32 octets en base64) est requis en production : openssl rand -base64 32.");
     if (cfg.STORAGE_DRIVER === "s3" && (!cfg.S3_BUCKET || !cfg.S3_ACCESS_KEY_ID || !cfg.S3_SECRET_ACCESS_KEY))

@@ -11,6 +11,7 @@ import { audit } from "../lib/audit.js";
 import { SecretBox } from "../lib/secretbox.js";
 import { newTotpSecret, otpauthUri, verifyTotp } from "../lib/totp.js";
 import { zip } from "../lib/zip.js";
+import { queueSecurityAlert } from "../lib/mailer.js";
 import { servableStates } from "../lib/quarantine.js";
 import { sessionCookieName } from "../plugins/auth.js";
 
@@ -152,6 +153,7 @@ export default async function accountRoutes(app: FastifyInstance) {
       // Les autres appareils, ouverts sans second facteur, sont déconnectés.
       await c.query("DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2", [u.id, req.sessionHash]);
       await audit(c, { actorId: u.id, action: "account.2fa_enabled", subject: `user:${u.id}`, ip: req.ip });
+      await queueSecurityAlert(c, cfg, u, "2fa_enabled");
       return rc.plain;
     });
     return { enabled: true, recoveryCodes: codes };
@@ -180,6 +182,7 @@ export default async function accountRoutes(app: FastifyInstance) {
       await c.query("UPDATE users SET totp_secret_enc = NULL, totp_pending_enc = NULL, totp_enabled_at = NULL, totp_last_step = NULL WHERE id = $1", [u.id]);
       await c.query("DELETE FROM user_recovery_codes WHERE user_id = $1", [u.id]);
       await audit(c, { actorId: u.id, action: "account.2fa_disabled", subject: `user:${u.id}`, ip: req.ip });
+      await queueSecurityAlert(c, cfg, u, "2fa_disabled");
     });
     return { enabled: false };
   });
@@ -266,6 +269,8 @@ export default async function accountRoutes(app: FastifyInstance) {
       await c.query("UPDATE audit_log SET ip = NULL, details = '{}'::jsonb WHERE actor_id = $1", [u.id]);
       await c.query("DELETE FROM users WHERE id = $1", [u.id]);
       await audit(c, { action: "account.deleted", subject: `user:${u.id}`, details: { files: rows.length } });
+      // Confirmation à l'adresse du compte supprimé (seule donnée conservée : cet e-mail en file, sans lien personnel).
+      await queueSecurityAlert(c, cfg, u, "account_deleted");
       return rows.map((r) => r.storage_key as string);
     });
     let removed = 0;

@@ -204,11 +204,16 @@ describe("suppression du compte", () => {
       ["SELECT count(*)::int n FROM projects WHERE owner_id = $1", user.id],
       ["SELECT count(*)::int n FROM files WHERE owner_id = $1", user.id],
       ["SELECT count(*)::int n FROM sessions WHERE user_id = $1", user.id],
-      ["SELECT count(*)::int n FROM email_outbox WHERE to_email = $1", email],
+      ["SELECT count(*)::int n FROM email_outbox WHERE to_email = $1 AND template <> 'deleted'", email],
       ["SELECT count(*)::int n FROM audit_log WHERE actor_id = $1", user.id],
     ] as const)
       expect((await ctx.db.query(sql, [arg])).rows[0].n, sql).toBe(0);
     expect((await ctx.db.query("SELECT count(*)::int n FROM audit_log WHERE action = 'account.deleted' AND subject = $1", [`user:${user.id}`])).rows[0].n).toBe(1);
+    // Seul reste le message de confirmation de suppression, sans aucun lien ni jeton.
+    const { rows: left } = await ctx.db.query("SELECT template, body_text FROM email_outbox WHERE to_email = $1", [email]);
+    expect(left).toHaveLength(1);
+    expect(left[0].template).toBe("deleted");
+    expect(left[0].body_text).not.toMatch(/https?:\/\/|token=/);
     expect((await new Client(ctx.app).post("/api/auth/login", { email, password: PW })).status).toBe(401);
     expect((await keeper.c.get(`/api/projects/${kept.id}`)).status).toBe(200);
   });

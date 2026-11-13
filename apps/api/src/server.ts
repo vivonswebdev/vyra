@@ -2,7 +2,7 @@ import { loadConfig } from "./config.js";
 import { createPool } from "./db/pool.js";
 import { migrate } from "./db/migrations.js";
 import { buildApp } from "./app.js";
-import { flushOutbox } from "./lib/mailer.js";
+import { createSender, flushOutbox } from "./lib/mailer.js";
 import { rescanUnscanned } from "./lib/quarantine.js";
 
 const cfg = loadConfig();
@@ -12,12 +12,15 @@ const app = await buildApp({ cfg, db });
 rescanUnscanned(app).catch((e) => app.log.error(e));
 
 // Envoi des e-mails en attente toutes les 15 secondes (transport réel uniquement).
-const mailTimer = setInterval(() => flushOutbox(db, cfg).catch((e) => app.log.error(e)), 15_000);
+const sender = createSender(cfg);
+const mailTimer = setInterval(() => flushOutbox(db, cfg, sender).catch((e) => app.log.error(e)), 15_000);
 // Purge des sessions et jetons expirés, toutes les heures.
 const purgeTimer = setInterval(() => {
   db.query("DELETE FROM sessions WHERE expires_at < now()").catch((e) => app.log.error(e));
   db.query("DELETE FROM auth_tokens WHERE expires_at < now() - interval '7 days'").catch((e) => app.log.error(e));
   db.query("DELETE FROM rate_limits WHERE reset_at < now()").catch((e) => app.log.error(e));
+  // Minimisation : les e-mails envoyés (adresse, contenu) ne sont gardés que 7 jours.
+  db.query("DELETE FROM email_outbox WHERE sent_at < now() - interval '7 days'").catch((e) => app.log.error(e));
   db.query("DELETE FROM auth_throttle WHERE window_start < now() - interval '1 day' AND (locked_until IS NULL OR locked_until < now())").catch((e) => app.log.error(e));
   db.query("DELETE FROM mfa_challenges WHERE expires_at < now()").catch((e) => app.log.error(e));
   rescanUnscanned(app).then((r) => (r.clean || r.infected || r.errors) && app.log.info(r, "analyse des fichiers anciens"), (e) => app.log.error(e));

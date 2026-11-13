@@ -14,7 +14,7 @@ import { tx } from "../db/pool.js";
 import { dummyHash, hashPassword, newToken, tokenHash, verifyPassword } from "../lib/crypto.js";
 import { badRequest, HttpError, unauthorized } from "../lib/errors.js";
 import { clearFailures, isLocked, recordFailure } from "../lib/throttle.js";
-import { queueEmail } from "../lib/mailer.js";
+import { queueEmail, queueSecurityAlert } from "../lib/mailer.js";
 import { audit } from "../lib/audit.js";
 import { toSessionUser, USER_COLUMNS } from "../plugins/auth.js";
 import { SecretBox } from "../lib/secretbox.js";
@@ -83,8 +83,9 @@ export default async function authRoutes(app: FastifyInstance) {
     const u = rows[0];
     const ok = await verifyPassword(input.password, u?.password_hash ?? (await dummyHash()));
     if (!u || !ok) {
-      await recordFailure(db, input.email);
+      const justLocked = await recordFailure(db, input.email);
       if (u) await audit(db, { actorId: u.id, action: "account.login_failed", subject: `user:${u.id}`, ip: req.ip });
+      if (u && justLocked) await queueSecurityAlert(db, cfg, { id: u.id, email: input.email, displayName: u.display_name, locale: u.locale }, "login_locked");
       throw new HttpError(401, "invalid_credentials", "Adresse e-mail ou mot de passe incorrect.");
     }
     // À partir d'ici le mot de passe est prouvé : les réponses peuvent être précises.
@@ -134,6 +135,10 @@ export default async function authRoutes(app: FastifyInstance) {
     }
     await db.query("DELETE FROM mfa_challenges WHERE token_hash = $1", [hash]);
     await app.startSession(reply, req, ch.user_id);
+    if (input.recoveryCode) {
+      const mu = await loadUser(ch.user_id);
+      await queueSecurityAlert(db, cfg, mu, "recovery_used");
+    }
     await audit(db, { actorId: ch.user_id, action: "account.login", subject: `user:${ch.user_id}`, ip: req.ip, details: { mfa: input.recoveryCode ? "recovery" : "totp" } });
     return { user: await loadUser(ch.user_id) };
   });
@@ -236,6 +241,8 @@ export default async function authRoutes(app: FastifyInstance) {
       );
       await c.query("DELETE FROM sessions WHERE user_id = $1", [id]);
       await audit(c, { actorId: id, action: "account.password_reset", subject: `user:${id}`, ip: req.ip });
+      const { rows: ur } = await c.query("SELECT email, display_name, locale FROM users WHERE id = $1", [id]);
+      await queueSecurityAlert(c, cfg, { id, email: ur[0].email, displayName: ur[0].display_name, locale: ur[0].locale }, "password_changed");
       // Avec la double authentification, l'accès à la boîte e-mail ne suffit pas : connexion complète exigée.
       const mfa = await c.query("SELECT totp_enabled_at FROM users WHERE id = $1", [id]);
       if (mfa.rows[0].totp_enabled_at) return { id, loginRequired: true };
@@ -257,6 +264,7 @@ export default async function authRoutes(app: FastifyInstance) {
       // Toutes les autres sessions sont fermées ; une nouvelle est ouverte ici.
       await c.query("DELETE FROM sessions WHERE user_id = $1", [u.id]);
       await audit(c, { actorId: u.id, action: "account.password_changed", subject: `user:${u.id}`, ip: req.ip });
+      await queueSecurityAlert(c, cfg, u, "password_changed");
       await app.startSession(reply, req, u.id, c);
     });
     return { ok: true };
