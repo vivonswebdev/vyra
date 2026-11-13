@@ -199,6 +199,7 @@ export function ObjectPanel({ ed, selection, expert, onDeleted }: { ed: Editor; 
           {expert && <NumberField label={t("obj.repeats")} value={o.run.repeats} min={1} max={5} step={1} onChange={(v) => set((x) => ({ ...x, run: { ...x.run, repeats: v } }))} />}
         </>
       )}
+      <p className="muted small">{t("obj.handlesHint")}</p>
       <div className="row2">
         <NumberField label={t("obj.scale")} value={scale} min={10} max={400} step={1} onChange={setScale} />
         <NumberField label={t("obj.rotate")} value={rot} min={-180} max={180} step={1} onChange={setRot} />

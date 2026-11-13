@@ -5,6 +5,8 @@ import { get, Icon, LangSwitch, Modal, Spinner, ThemeSwitch, useErrorText, useI1
 import type { ProjectDTO } from "@vyra/shared";
 import { useEditor, type Editor } from "../editor/useEditor.js";
 import { StitchCanvas, type CanvasHandle, type Display, type Tool } from "../editor/Canvas.js";
+import { readClip, writeClip } from "../editor/clipboard.js";
+import { copyItem, pasteItem } from "../editor/transform.js";
 import { AnalysisPanel, ExportPanel, HistoryPanel, LayersPanel, MachinePanel, ObjectPanel, QualityPanel, ThreadsPanel } from "../editor/panels.js";
 import { fileToRaster, urlToRaster } from "../lib/image.js";
 import { traceInWorker } from "../lib/trace.js";
@@ -92,6 +94,8 @@ function EditorInner({ project }: { project: ProjectDTO }) {
   const [busy, setBusy] = useState(false);
   const [showSource, setShowSource] = useState(false);
   const [overlay, setOverlay] = useState<HTMLImageElement | null>(null);
+  const [clipReady, setClipReady] = useState(() => !!readClip());
+  const pasteCount = useRef(0);
   const hasSource = !!(ed.settings.sourceFileId || ed.settings.demoMotif);
   useEffect(() => {
     if (!showSource || !hasSource) return setOverlay(null);
@@ -150,6 +154,40 @@ function EditorInner({ project }: { project: ProjectDTO }) {
     [t, ed.design],
   );
 
+  // Copier, couper, coller, dupliquer : une seule étape d'historique, nouvel identifiant, objet sélectionné.
+  const copySelection = useCallback(
+    (cut: boolean) => {
+      if (!ed.design || !selection) return;
+      const item = copyItem(ed.design, selection);
+      if (!item) return;
+      writeClip(item);
+      pasteCount.current = 0;
+      setClipReady(true);
+      if (cut) {
+        ed.commit((d) => ({ ...d, objects: d.objects.filter((o) => o.id !== selection) }));
+        setSelection(null);
+      }
+      toast(t(cut ? "obj.cut" : "obj.copied"));
+    },
+    [ed, selection, t, toast],
+  );
+  const pasteClip = useCallback(
+    (item = readClip(), offset?: number) => {
+      if (!item || !ed.design) return;
+      if (offset === undefined) offset = 5 * ++pasteCount.current;
+      const r = pasteItem(ed.design, item, offset, t("obj.copyName", { name: item.object.name || t("tab.object") }));
+      ed.commit(r.design);
+      setSelection(r.id);
+      toast(t("obj.pasted"));
+    },
+    [ed, t, toast],
+  );
+  const duplicateSelection = useCallback(() => {
+    if (!ed.design || !selection) return;
+    const item = copyItem(ed.design, selection);
+    if (item) pasteClip(item, 5);
+  }, [ed.design, selection, pasteClip]);
+
   // Raccourcis clavier
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -165,6 +203,18 @@ function EditorInner({ project }: { project: ProjectDTO }) {
       } else if (mod && e.key.toLowerCase() === "s") {
         e.preventDefault();
         ed.saveNow().catch(() => {});
+      } else if (mod && (e.key.toLowerCase() === "c" || e.key.toLowerCase() === "x") && selection) {
+        // Pas de vol du copier natif si l'utilisateur a sélectionné du texte dans la page.
+        if (window.getSelection()?.toString()) return;
+        e.preventDefault();
+        copySelection(e.key.toLowerCase() === "x");
+      } else if (mod && e.key.toLowerCase() === "v") {
+        if (!readClip()) return;
+        e.preventDefault();
+        pasteClip();
+      } else if (mod && e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        duplicateSelection();
       } else if (e.key === " " && !e.repeat) {
         e.preventDefault();
         setSpace(true);
@@ -184,7 +234,7 @@ function EditorInner({ project }: { project: ProjectDTO }) {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onUp);
     };
-  }, [ed, selection, t, toast]);
+  }, [ed, selection, t, toast, copySelection, pasteClip, duplicateSelection]);
 
   const select = (id: string | null) => {
     setSelection(id);
@@ -340,6 +390,16 @@ function EditorInner({ project }: { project: ProjectDTO }) {
         </button>
         <button className="icon-btn" title={t("tool.fit")} aria-label={t("tool.fit")} onClick={() => canvas.current?.fit()}>
           <Icon d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
+        </button>
+        <span className="rail-sep" />
+        <button className="icon-btn" title={t("tool.copy")} aria-label={t("tool.copy")} disabled={!selection} onClick={() => copySelection(false)} data-testid="copy-object">
+          <Icon d="M9 9h11v11H9zM5 15H4V4h11v1" />
+        </button>
+        <button className="icon-btn" title={t("tool.paste")} aria-label={t("tool.paste")} disabled={!clipReady || !ed.design} onClick={() => pasteClip()} data-testid="paste-object">
+          <Icon d="M9 3h6v3H9zM7 4.5H5V21h14V4.5h-2" />
+        </button>
+        <button className="icon-btn" title={t("tool.duplicate")} aria-label={t("tool.duplicate")} disabled={!selection} onClick={duplicateSelection} data-testid="duplicate-object">
+          <Icon d="M8 8h12v12H8zM4 16V4h12M14 11v6M11 14h6" />
         </button>
         {ed.design && ed.design.threads.length > 0 && (
           <label className="draw-color" title={t("tool.drawColor")}>

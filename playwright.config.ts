@@ -11,7 +11,7 @@ export default defineConfig({
   webServer: { command: "node scripts/e2e-server.mjs", url: "http://127.0.0.1:8788/api/health", reuseExistingServer: false, timeout: 60_000 },
   projects: [
     { name: "ordinateur", use: { viewport: { width: 1440, height: 900 } } },
-    { name: "tablette", use: { ...devices["iPad (gen 7) landscape"], browserName: "chromium" }, testMatch: /responsive/ },
-    { name: "mobile", use: { ...devices["Pixel 7"], browserName: "chromium" }, testMatch: /responsive/ },
+    { name: "tablette", use: { ...devices["iPad (gen 7) landscape"], browserName: "chromium" }, testMatch: /responsive|lot31/ },
+    { name: "mobile", use: { ...devices["Pixel 7"], browserName: "chromium" }, testMatch: /responsive|lot31/ },
   ],
 });

@@ -1,5 +1,5 @@
 // Zone de travail : rendu du plan de couture par le moteur (fidèle au fichier exporté),
-// cadre de la machine, outils de sélection, déplacement, nœuds, formes et tracé libre.
+// cadre de la machine, outils de sélection, déplacement, poignées (échelle, rotation), nœuds, formes et tracé libre.
 // Souris, stylet et toucher (pincer pour zoomer, glisser à deux doigts pour déplacer).
 import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import {
@@ -16,6 +16,22 @@ import {
   type Point,
 } from "@vyra/engine";
 import { fabricPattern, renderPlan } from "@vyra/engine/browser";
+import {
+  CORNERS,
+  cornerOf,
+  handlePositions,
+  hitHandle,
+  oppositeCorner,
+  rotationFromDrag,
+  scaleFromDrag,
+  transformObject,
+  transformPoint,
+  type Affine,
+  type Bounds,
+  nextObjectId,
+  type HandleId,
+} from "./transform.js";
+export { nextObjectId };
 
 export type Tool = "select" | "nodes" | "pan" | "pen" | "rect" | "ellipse";
 export interface View {
@@ -57,6 +73,8 @@ interface Props {
 type Drag =
   | { kind: "pan"; sx: number; sy: number; ox: number; oy: number }
   | { kind: "move"; id: string; start: Point; dx: number; dy: number }
+  | { kind: "scale"; id: string; handle: Exclude<HandleId, "rot">; anchor: Point; start: Point; b: Bounds; k: number }
+  | { kind: "rotate"; id: string; c: Point; start: Point; a: number }
   | { kind: "node"; id: string; ring: number; index: number; p: Point }
   | { kind: "shape"; shape: "rect" | "ellipse"; a: Point; b: Point }
   | { kind: "pen"; pts: Point[] };
@@ -72,14 +90,13 @@ function cssVar(name: string, fallback: string) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
 }
 
-export function nextObjectId(design: Design): string {
-  let n = 0;
-  for (const o of design.objects) {
-    const m = /^obj(\d+)$/.exec(o.id);
-    if (m) n = Math.max(n, +m[1]);
-  }
-  return "obj" + (n + 1);
+/** Transformation en cours d'un glisser (échelle ou rotation), pour l'aperçu. */
+function dragAffine(drag: Drag | null): Affine | null {
+  if (drag?.kind === "scale") return { cx: drag.anchor.x, cy: drag.anchor.y, k: drag.k, a: 0 };
+  if (drag?.kind === "rotate") return { cx: drag.c.x, cy: drag.c.y, k: 1, a: drag.a };
+  return null;
 }
+const HANDLE_CURSORS: Record<HandleId, string> = { nw: "nwse-resize", se: "nwse-resize", ne: "nesw-resize", sw: "nesw-resize", rot: "grab" };
 
 export function StitchCanvas(props: Props) {
   const { design, plan, hoop, tool, selection, display, upto, marker } = props;
@@ -91,6 +108,9 @@ export function StitchCanvas(props: Props) {
   const pinch = useRef<{ d: number; mx: number; my: number; view: View } | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const fitted = useRef(false);
+  // Toucher ou stylet : poignées plus grandes et plus faciles à saisir.
+  const [coarse, setCoarse] = useState(() => typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches);
+  const [hover, setHover] = useState<HandleId | null>(null);
 
   const hoopRect = useCallback(() => {
     const cx = design ? design.widthMm / 2 : 65;
@@ -196,11 +216,15 @@ export function StitchCanvas(props: Props) {
     // Plan de couture (avec aperçu de déplacement sans recalcul)
     if (plan) {
       let p = plan;
-      if (drag?.kind === "move" && (drag.dx || drag.dy)) {
-        const range = plan.objectRanges.find((x) => x.objectId === drag.id);
+      const aff = dragAffine(drag);
+      if ((drag?.kind === "move" && (drag.dx || drag.dy)) || aff) {
+        const range = plan.objectRanges.find((x) => x.objectId === (drag as { id: string }).id);
         if (range) {
           const st = plan.stitches.slice();
-          for (let i = range.start; i < range.end; i++) st[i] = { ...st[i], x: st[i].x + drag.dx, y: st[i].y + drag.dy };
+          for (let i = range.start; i < range.end; i++) {
+            const q = aff ? transformPoint(st[i], aff) : { x: st[i].x + (drag as { dx: number }).dx, y: st[i].y + (drag as { dy: number }).dy };
+            st[i] = { ...st[i], x: q.x, y: q.y };
+          }
           p = { ...plan, stitches: st };
         }
       }
@@ -223,8 +247,34 @@ export function StitchCanvas(props: Props) {
       ctx.strokeStyle = copper;
       ctx.lineWidth = 1.5;
       ctx.setLineDash([5, 3]);
-      ctx.strokeRect(X(b.minX + dx) - 4, Y(b.minY + dy) - 4, (b.maxX - b.minX) * scale + 8, (b.maxY - b.minY) * scale + 8);
+      const aff = dragAffine(drag);
+      if (aff) {
+        // Cadre transformé (tourné ou mis à l'échelle) pendant le glisser.
+        ctx.beginPath();
+        CORNERS.map((h) => transformPoint(cornerOf(b, h), aff)).forEach((q, i) => (i ? ctx.lineTo(X(q.x), Y(q.y)) : ctx.moveTo(X(q.x), Y(q.y))));
+        ctx.closePath();
+        ctx.stroke();
+      } else ctx.strokeRect(X(b.minX + dx) - 4, Y(b.minY + dy) - 4, (b.maxX - b.minX) * scale + 8, (b.maxY - b.minY) * scale + 8);
       ctx.setLineDash([]);
+      if (tool === "select" && !drag) {
+        // Poignées : quatre coins (échelle, coin opposé fixe) et rotation au-dessus.
+        const hs = handlePositions(b, view);
+        const r = coarse ? 7 : 4.5;
+        ctx.fillStyle = cssVar("--raised", "#fff");
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(hs.rot.x, hs.rot.y + r);
+        ctx.lineTo(hs.rot.x, (hs.nw.y + hs.ne.y) / 2);
+        ctx.stroke();
+        for (const h of CORNERS) {
+          ctx.fillRect(hs[h].x - r, hs[h].y - r, r * 2, r * 2);
+          ctx.strokeRect(hs[h].x - r, hs[h].y - r, r * 2, r * 2);
+        }
+        ctx.beginPath();
+        ctx.arc(hs.rot.x, hs.rot.y, r + 0.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
       if (tool === "nodes") {
         const rs = rings(sel);
         rs.forEach((ring, ri) => {
@@ -264,7 +314,7 @@ export function StitchCanvas(props: Props) {
         ctx.stroke();
       }
     }
-  }, [design, plan, view, size, drag, selection, tool, display, upto, marker, hoopRect, props.overlay]);
+  }, [design, plan, view, size, drag, selection, tool, display, upto, marker, hoopRect, props.overlay, coarse]);
 
   // ------------------------------------------------------------ Interactions
 
@@ -290,6 +340,8 @@ export function StitchCanvas(props: Props) {
 
   const onPointerDown = (e: React.PointerEvent) => {
     canvas.current!.setPointerCapture(e.pointerId);
+    const touch = e.pointerType === "touch" || e.pointerType === "pen";
+    if (touch !== coarse) setCoarse(touch);
     pointers.current.set(e.pointerId, local(e));
     if (pointers.current.size === 2) {
       const [a, b] = [...pointers.current.values()];
@@ -303,6 +355,15 @@ export function StitchCanvas(props: Props) {
     if (panning || !design) {
       setDrag({ kind: "pan", sx: l.x, sy: l.y, ox: view.ox, oy: view.oy });
       return;
+    }
+    if (tool === "select" && selection) {
+      const o = design.objects.find((x) => x.id === selection);
+      const h = o && hitHandle(handlePositions(objectBounds(o), view), l, touch ? 22 : 10);
+      if (o && h) {
+        const b = objectBounds(o);
+        if (h === "rot") return setDrag({ kind: "rotate", id: o.id, c: { x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 }, start: p, a: 0 });
+        return setDrag({ kind: "scale", id: o.id, handle: h, anchor: oppositeCorner(b, h), start: cornerOf(b, h), b, k: 1 });
+      }
     }
     if (tool === "rect" || tool === "ellipse") return setDrag({ kind: "shape", shape: tool, a: p, b: p });
     if (tool === "pen") return setDrag({ kind: "pen", pts: [p] });
@@ -337,12 +398,21 @@ export function StitchCanvas(props: Props) {
       setView({ scale, ox: mx - (pinch.current.mx - v0.ox) * k, oy: my - (pinch.current.my - v0.oy) * k });
       return;
     }
-    if (!drag) return;
+    if (!drag) {
+      if (tool === "select" && selection && design && e.pointerType === "mouse") {
+        const o = design.objects.find((x) => x.id === selection);
+        const h = o ? hitHandle(handlePositions(objectBounds(o), view), local(e), 10) : null;
+        if (h !== hover) setHover(h);
+      }
+      return;
+    }
     const p = toMm(e);
     if (drag.kind === "pan") {
       const l = local(e);
       setView((v) => ({ ...v, ox: drag.ox + l.x - drag.sx, oy: drag.oy + l.y - drag.sy }));
     } else if (drag.kind === "move") setDrag({ ...drag, dx: p.x - drag.start.x, dy: p.y - drag.start.y });
+    else if (drag.kind === "scale") setDrag({ ...drag, k: scaleFromDrag(drag.anchor, drag.start, p, drag.b) });
+    else if (drag.kind === "rotate") setDrag({ ...drag, a: rotationFromDrag(drag.c, drag.start, p, e.shiftKey) });
     else if (drag.kind === "node") setDrag({ ...drag, p });
     else if (drag.kind === "shape") setDrag({ ...drag, b: p });
     else if (drag.kind === "pen") {
@@ -359,6 +429,11 @@ export function StitchCanvas(props: Props) {
     if (!d || !design) return;
     if (d.kind === "move" && Math.hypot(d.dx, d.dy) > 0.05) {
       props.onCommit((des) => ({ ...des, objects: des.objects.map((o) => (o.id === d.id ? mapObjectPoints(o, (q) => ({ x: q.x + d.dx, y: q.y + d.dy })) : o)) }));
+    } else if (d.kind === "scale" || d.kind === "rotate") {
+      const aff = dragAffine(d)!;
+      if (Math.abs(aff.k - 1) < 1e-3 && Math.abs(aff.a) < 1e-3) return;
+      // Une seule étape d'historique pour tout le glisser.
+      props.onCommit((des) => ({ ...des, objects: des.objects.map((o) => (o.id === d.id ? transformObject(o, aff) : o)) }));
     } else if (d.kind === "node") {
       props.onCommit((des) => editRing(des, d.id, d.ring, (r) => r.map((q, i) => (i === d.index ? d.p : q))));
     } else if (d.kind === "shape") {
@@ -405,12 +480,29 @@ export function StitchCanvas(props: Props) {
     return () => c.removeEventListener("wheel", onWheel);
   }, [zoomAt]);
 
-  const cursor = tool === "pan" || props.spaceDown ? (drag?.kind === "pan" ? "grabbing" : "grab") : tool === "select" ? "default" : "crosshair";
+  const cursor =
+    tool === "pan" || props.spaceDown
+      ? drag?.kind === "pan"
+        ? "grabbing"
+        : "grab"
+      : drag?.kind === "rotate"
+        ? "grabbing"
+        : drag?.kind === "scale"
+          ? HANDLE_CURSORS[drag.handle]
+          : tool === "select"
+            ? hover && selection
+              ? HANDLE_CURSORS[hover]
+              : "default"
+            : "crosshair";
+  // Positions des poignées exposées pour les tests de bout en bout (coordonnées dans le canevas, en pixels).
+  const selObj = tool === "select" && selection ? design?.objects.find((o) => o.id === selection) : undefined;
+  const handlesAttr = selObj ? JSON.stringify(handlePositions(objectBounds(selObj), view)) : undefined;
   return (
     <div className="workspace" ref={wrap}>
       <canvas
         ref={canvas}
         data-testid="stitch-canvas"
+        data-handles={handlesAttr}
         style={{ width: size.w, height: size.h, cursor, touchAction: "none" }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
