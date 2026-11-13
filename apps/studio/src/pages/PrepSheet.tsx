@@ -4,17 +4,19 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { analyze, findMachine, planBounds, stitchThreadIndex, STITCH, type Design } from "@vyra/engine";
 import { renderPlan } from "@vyra/engine/browser";
-import { Brand, get, Spinner, useI18n } from "@vyra/ui";
+import { Brand, get, Spinner, useErrorText, useI18n } from "@vyra/ui";
 import type { ProjectDTO } from "@vyra/shared";
 
 export default function PrepSheet() {
   const { id } = useParams();
   const { t, lang } = useI18n();
+  const errText = useErrorText();
   const [project, setProject] = useState<ProjectDTO | null>(null);
   const [error, setError] = useState("");
   const canvas = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
-    get<{ project: ProjectDTO }>(`/api/projects/${id}`).then((r) => setProject(r.project), (e) => setError(e.message));
+    get<{ project: ProjectDTO }>(`/api/projects/${id}`).then((r) => setProject(r.project), (e) => setError(errText(e)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
   const data = useMemo(() => {
     if (!project?.design) return null;

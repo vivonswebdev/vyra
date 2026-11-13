@@ -6,6 +6,8 @@ export class ApiError extends Error {
     public code: string,
     message: string,
     public details?: any,
+    public reason?: string,
+    public params?: Record<string, string | number>,
   ) {
     super(message);
     this.name = "ApiError";
@@ -34,7 +36,7 @@ export async function api<T = any>(method: string, url: string, body?: unknown, 
   const json = text ? safeJson(text) : null;
   if (!res.ok) {
     const e = json?.error ?? {};
-    throw new ApiError(res.status, e.code ?? "error", e.message ?? `HTTP ${res.status}`, e.details);
+    throw new ApiError(res.status, e.code ?? "error", e.message ?? `HTTP ${res.status}`, e.details, e.reason, e.params);
   }
   return json as T;
 }
@@ -52,11 +54,11 @@ export const post = <T = any>(url: string, body: unknown = {}) => api<T>("POST",
 export const patch = <T = any>(url: string, body: unknown = {}) => api<T>("PATCH", url, body);
 export const del = <T = any>(url: string, body?: unknown) => api<T>("DELETE", url, body);
 
-/** Erreurs de validation par champ, pour les formulaires. */
-export function fieldErrors(e: unknown): Record<string, string> {
-  if (!(e instanceof ApiError) || !Array.isArray(e.details)) return {};
+/** Erreurs de validation par champ, pour les formulaires (`text` traduit chaque détail). */
+export function fieldErrors(e: unknown, text: (d: any) => string = (d) => d.message): Record<string, string> {
+  if (!(e instanceof ApiError) || e.code !== "validation" || !Array.isArray(e.details)) return {};
   const out: Record<string, string> = {};
-  for (const d of e.details) if (d?.path && !out[d.path]) out[d.path] = d.message;
+  for (const d of e.details) if (d?.path && !out[d.path]) out[d.path] = text(d);
   return out;
 }
 

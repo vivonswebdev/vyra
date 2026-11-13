@@ -68,7 +68,7 @@ export default async function accountRoutes(app: FastifyInstance) {
     const { rows } = await db.query("SELECT password_hash FROM users WHERE id = $1", [userId]);
     if (!(await verifyPassword(password, rows[0].password_hash))) {
       await audit(db, { actorId: userId, action: "account.reauth_failed", subject: `user:${userId}`, ip: req.ip });
-      throw badRequest("Mot de passe incorrect.");
+      throw badRequest("wrong_password", "Mot de passe incorrect.");
     }
   }
 
@@ -98,7 +98,7 @@ export default async function accountRoutes(app: FastifyInstance) {
     const u = app.requireUser(req);
     const { id } = z.object({ id: z.uuid() }).parse(req.params);
     const { rows } = await db.query("DELETE FROM sessions WHERE id = $1 AND user_id = $2 RETURNING token_hash = $3 AS current", [id, u.id, req.sessionHash]);
-    if (!rows[0]) throw notFound("Session introuvable.");
+    if (!rows[0]) throw notFound("session_not_found", "Session introuvable.");
     await audit(db, { actorId: u.id, action: "account.session_revoked", subject: `user:${u.id}`, ip: req.ip, details: { session: id } });
     if (rows[0].current) reply.clearCookie(sessionCookieName(cfg.secureCookies), { path: "/", secure: cfg.secureCookies });
     return { ok: true, current: rows[0].current };
@@ -138,11 +138,11 @@ export default async function accountRoutes(app: FastifyInstance) {
     const { code } = z.object({ code: Code }).parse(req.body);
     const codes = await tx(db, async (c) => {
       const { rows } = await c.query("SELECT totp_pending_enc, totp_enabled_at FROM users WHERE id = $1 FOR UPDATE", [u.id]);
-      if (rows[0].totp_enabled_at) throw badRequest("La double authentification est déjà active.");
-      if (!rows[0].totp_pending_enc) throw badRequest("Commencez par la configuration (scanner le code).");
+      if (rows[0].totp_enabled_at) throw badRequest("mfa_already_enabled", "La double authentification est déjà active.");
+      if (!rows[0].totp_pending_enc) throw badRequest("mfa_setup_first", "Commencez par la configuration (scanner le code).");
       const secret = box.open(rows[0].totp_pending_enc);
       const step = verifyTotp(secret, code);
-      if (step == null) throw badRequest("Code incorrect. Vérifiez l'heure de votre téléphone et réessayez.");
+      if (step == null) throw badRequest("wrong_code_clock", "Code incorrect. Vérifiez l'heure de votre téléphone et réessayez.");
       await c.query(
         "UPDATE users SET totp_secret_enc = totp_pending_enc, totp_pending_enc = NULL, totp_enabled_at = now(), totp_last_step = $2 WHERE id = $1",
         [u.id, step],
@@ -163,7 +163,7 @@ export default async function accountRoutes(app: FastifyInstance) {
     const u = app.requireUser(req);
     const input = z.object({ password: z.string().min(1).max(200), code: Code }).parse(req.body);
     await requirePassword(req, u.id, input.password);
-    if (!(await checkSecondFactor(db, box, u.id, { code: input.code }))) throw badRequest("Code incorrect.");
+    if (!(await checkSecondFactor(db, box, u.id, { code: input.code }))) throw badRequest("wrong_code", "Code incorrect.");
     const rc = newRecoveryCodes();
     await tx(db, async (c) => {
       await c.query("DELETE FROM user_recovery_codes WHERE user_id = $1", [u.id]);
@@ -177,7 +177,7 @@ export default async function accountRoutes(app: FastifyInstance) {
     const u = app.requireUser(req);
     const input = z.object({ password: z.string().min(1).max(200), code: Code.optional(), recoveryCode: RecoveryCode.optional() }).parse(req.body);
     await requirePassword(req, u.id, input.password);
-    if (!(await checkSecondFactor(db, box, u.id, input))) throw badRequest("Code incorrect.");
+    if (!(await checkSecondFactor(db, box, u.id, input))) throw badRequest("wrong_code", "Code incorrect.");
     await tx(db, async (c) => {
       await c.query("UPDATE users SET totp_secret_enc = NULL, totp_pending_enc = NULL, totp_enabled_at = NULL, totp_last_step = NULL WHERE id = $1", [u.id]);
       await c.query("DELETE FROM user_recovery_codes WHERE user_id = $1", [u.id]);

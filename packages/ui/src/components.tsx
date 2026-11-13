@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { ApiError } from "./api.js";
+import { fieldErrors } from "./api.js";
+import { apiDetailText, apiErrorText } from "./api-errors.js";
 import { LANG_LABELS, useI18n, type Lang } from "./i18n.js";
 import { useSession, type Theme } from "./session.js";
 
@@ -187,12 +188,16 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 export const useToast = () => useContext(ToastCtx);
 
 /** Message lisible pour une erreur d'API. */
+/** Message traduit d'une erreur de l'API (jamais le texte français brut du serveur). */
 export function useErrorText() {
   const { t } = useI18n();
-  return (e: unknown) => {
-    if (e instanceof ApiError) return e.code === "offline" ? t("common.offline") : e.message;
-    return t("common.error");
-  };
+  return (e: unknown) => apiErrorText(t, e);
+}
+
+/** Erreurs de validation par champ, traduites. */
+export function useFieldErrors() {
+  const { t } = useI18n();
+  return (e: unknown) => fieldErrors(e, (d) => apiDetailText(t, d));
 }
 
 // ---------------------------------------------------------------- Langue et thème

@@ -126,12 +126,12 @@ export default async function authRoutes(app: FastifyInstance) {
     const ch = rows[0];
     if (!ch || ch.attempts > 5) {
       await db.query("DELETE FROM mfa_challenges WHERE token_hash = $1", [hash]);
-      throw unauthorized("Étape de vérification expirée. Reconnectez-vous.");
+      throw unauthorized("mfa_expired", "Étape de vérification expirée. Reconnectez-vous.");
     }
     const ok = await checkSecondFactor(db, box, ch.user_id, { code: input.code || undefined, recoveryCode: input.recoveryCode || undefined });
     if (!ok) {
       await audit(db, { actorId: ch.user_id, action: "account.mfa_failed", subject: `user:${ch.user_id}`, ip: req.ip });
-      throw unauthorized("Code incorrect.");
+      throw unauthorized("wrong_code", "Code incorrect.");
     }
     await db.query("DELETE FROM mfa_challenges WHERE token_hash = $1", [hash]);
     await app.startSession(reply, req, ch.user_id);
@@ -159,7 +159,7 @@ export default async function authRoutes(app: FastifyInstance) {
           RETURNING user_id`,
         [tokenHash(token)],
       );
-      if (!rows[0]) throw badRequest("Lien invalide ou expiré. Demandez un nouveau lien depuis votre profil.");
+      if (!rows[0]) throw badRequest("verify_link_invalid", "Lien invalide ou expiré. Demandez un nouveau lien depuis votre profil.");
       await c.query("UPDATE users SET email_verified_at = COALESCE(email_verified_at, now()), updated_at = now() WHERE id = $1", [rows[0].user_id]);
       await audit(c, { actorId: rows[0].user_id, action: "account.email_verified", subject: `user:${rows[0].user_id}`, ip: req.ip });
       return rows[0].user_id as string;
@@ -231,7 +231,7 @@ export default async function authRoutes(app: FastifyInstance) {
           RETURNING user_id`,
         [tokenHash(input.token)],
       );
-      if (!rows[0]) throw badRequest("Lien invalide ou expiré. Refaites une demande de réinitialisation.");
+      if (!rows[0]) throw badRequest("reset_link_invalid", "Lien invalide ou expiré. Refaites une demande de réinitialisation.");
       const id = rows[0].user_id as string;
       // Le lien reçu par e-mail prouve aussi la possession de l'adresse.
       await c.query(
@@ -257,7 +257,7 @@ export default async function authRoutes(app: FastifyInstance) {
     const u = app.requireUser(req);
     const input = ChangePasswordInput.parse(req.body);
     const { rows } = await db.query("SELECT password_hash FROM users WHERE id = $1", [u.id]);
-    if (!(await verifyPassword(input.currentPassword, rows[0].password_hash))) throw badRequest("Mot de passe actuel incorrect.");
+    if (!(await verifyPassword(input.currentPassword, rows[0].password_hash))) throw badRequest("wrong_current_password", "Mot de passe actuel incorrect.");
     const passwordHash = await hashPassword(input.newPassword);
     await tx(db, async (c) => {
       await c.query("UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1", [u.id, passwordHash]);

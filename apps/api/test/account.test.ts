@@ -42,8 +42,16 @@ describe("TOTP (RFC 6238) et chiffrement des secrets", () => {
     const sealed = box.seal("SECRET");
     expect(sealed).not.toContain("SECRET");
     expect(box.open(sealed)).toBe("SECRET");
-    const tampered = sealed.slice(0, -2) + (sealed.endsWith("A") ? "B" : "A") + sealed.slice(-1);
-    expect(() => box.open(tampered)).toThrow();
+    // Un bit modifié dans le vecteur d'initialisation, l'étiquette ou le chiffré est toujours détecté.
+    // (L'ancienne version remplaçait un caractère base64 par lui-même une fois sur 64 : test instable.)
+    const parts = sealed.split(".");
+    for (const i of [1, 2, 3]) {
+      const b = Buffer.from(parts[i], "base64url");
+      b[b.length - 1] ^= 0x01;
+      const tampered = parts.map((p, j) => (j === i ? b.toString("base64url") : p)).join(".");
+      expect(tampered).not.toBe(sealed);
+      expect(() => box.open(tampered)).toThrow();
+    }
   });
 });
 

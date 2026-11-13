@@ -54,7 +54,7 @@ export default async function projectRoutes(app: FastifyInstance) {
       `SELECT * FROM projects WHERE id = $1 AND owner_id = $2 AND (deleted_at IS ${opts.trashed ? "NOT NULL" : "NULL"})${opts.lock ? " FOR UPDATE" : ""}`,
       [id, userId],
     );
-    if (!rows[0]) throw notFound("Projet introuvable.");
+    if (!rows[0]) throw notFound("project_not_found", "Projet introuvable.");
     return rows[0];
   }
 
@@ -116,7 +116,7 @@ export default async function projectRoutes(app: FastifyInstance) {
     const p = await tx(db, async (c) => {
       const cur = await own(c, u.id, id, { lock: true });
       if (cur.revision !== input.baseRevision)
-        throw conflict("Ce projet a été modifié ailleurs (autre onglet ou appareil). Rechargez-le avant d'enregistrer.", {
+        throw conflict("project_conflict", "Ce projet a été modifié ailleurs (autre onglet ou appareil). Rechargez-le avant d'enregistrer.", {
           currentRevision: cur.revision,
         });
       const { rows } = await c.query(
@@ -184,7 +184,7 @@ export default async function projectRoutes(app: FastifyInstance) {
     const body = z.object({ confirmName: z.string() }).parse(req.body ?? {});
     const keys = await tx(db, async (c) => {
       const p = await own(c, u.id, id, { trashed: true, lock: true });
-      if (body.confirmName !== p.name) throw badRequest("Le nom saisi ne correspond pas au projet.");
+      if (body.confirmName !== p.name) throw badRequest("name_mismatch", "Le nom saisi ne correspond pas au projet.");
       const { rows } = await c.query(
         `UPDATE files SET deleted_at = now() WHERE owner_id = $2 AND deleted_at IS NULL AND id IN (
            SELECT file_id FROM project_exports WHERE project_id = $1 UNION SELECT file_id FROM project_files WHERE project_id = $1)
@@ -218,7 +218,7 @@ export default async function projectRoutes(app: FastifyInstance) {
     const p = await tx(db, async (c) => {
       await own(c, u.id, id, { lock: true });
       const { rows: v } = await c.query("SELECT * FROM project_versions WHERE id = $1 AND project_id = $2", [versionId, id]);
-      if (!v[0]) throw notFound("Version introuvable.");
+      if (!v[0]) throw notFound("version_not_found", "Version introuvable.");
       const { rows } = await c.query(
         "UPDATE projects SET design = $2, settings = $3, revision = revision + 1, updated_at = now() WHERE id = $1 RETURNING *",
         [id, v[0].design == null ? null : JSON.stringify(v[0].design), JSON.stringify(v[0].settings)],
@@ -235,7 +235,7 @@ export default async function projectRoutes(app: FastifyInstance) {
     const u = app.requireUser(req);
     const { id } = Id.parse(req.params);
     const p = await own(db, u.id, id);
-    if (!p.design) throw notFound("Aucun motif dans ce projet.");
+    if (!p.design) throw notFound("no_design", "Aucun motif dans ce projet.");
     let svg: string = p.thumbnail_svg;
     if (p.thumbnail_revision !== p.revision || !svg) {
       svg = (await app.engine.run<{ svg: string }>("thumbnail", { design: p.design, name: p.name })).svg;
@@ -255,11 +255,11 @@ export default async function projectRoutes(app: FastifyInstance) {
     const { id } = Id.parse(req.params);
     await own(db, u.id, id);
     const part = await req.file({ limits: { fileSize: 20 * 1024 * 1024, files: 1 } });
-    if (!part) throw badRequest("Aucun fichier reçu.");
+    if (!part) throw badRequest("no_file", "Aucun fichier reçu.");
     const bytes = await part.toBuffer();
-    if (part.file.truncated) throw badRequest("Fichier trop volumineux (20 Mo au plus).");
+    if (part.file.truncated) throw badRequest("file_too_large", "Fichier trop volumineux (20 Mo au plus).");
     const kind = sniffImage(bytes, part.filename);
-    if (!kind) throw badRequest("Format refusé : PNG, JPG, WEBP, BMP, SVG ou PDF uniquement.");
+    if (!kind) throw badRequest("file_type", "Format refusé : PNG, JPG, WEBP, BMP, SVG ou PDF uniquement.");
     // Quarantaine puis analyse antivirus : le fichier n'est rattaché au projet que s'il est sain.
     const file = await quarantineAndScan(app, db, {
       ownerId: u.id,
@@ -283,7 +283,7 @@ export default async function projectRoutes(app: FastifyInstance) {
     const { id } = Id.parse(req.params);
     const { format } = ExportInput.parse(req.body);
     const p = await own(db, u.id, id);
-    if (!p.design) throw badRequest("Le projet ne contient pas encore de motif.");
+    if (!p.design) throw badRequest("no_design", "Le projet ne contient pas encore de motif.");
     const settings = p.settings ?? {};
     const r = await app.engine.run<{ blocked: boolean; bytes?: Uint8Array; stats: PlanStats; qc: QualityReport; issues?: QualityIssue[] }>("export", {
       design: p.design,
@@ -336,7 +336,7 @@ export default async function projectRoutes(app: FastifyInstance) {
         WHERE e.id = $1 AND p.owner_id = $2 AND f.deleted_at IS NULL`,
       [id, u.id],
     );
-    if (!rows[0]) throw notFound("Export introuvable.");
+    if (!rows[0]) throw notFound("export_not_found", "Export introuvable.");
     return deliver(app, reply, rows[0].storage_key, rows[0].filename, "application/octet-stream");
   });
 
@@ -347,7 +347,7 @@ export default async function projectRoutes(app: FastifyInstance) {
       "SELECT storage_key, filename, mime FROM files WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL AND kind = 'source_image' AND scan_status = ANY($3)",
       [id, u.id, servableStates(app)],
     );
-    if (!rows[0]) throw notFound("Fichier introuvable.");
+    if (!rows[0]) throw notFound("file_not_found", "Fichier introuvable.");
     return deliver(app, reply, rows[0].storage_key, rows[0].filename, rows[0].mime);
   });
 }

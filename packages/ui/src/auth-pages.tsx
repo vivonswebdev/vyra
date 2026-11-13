@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { PASSWORD_MIN, type UserDTO } from "@vyra/shared";
-import { api, downloadUrl, fieldErrors, get, post, saveBlob } from "./api.js";
-import { Brand, Field, LangSwitch, Spinner, ThemeSwitch, useErrorText, useToast, Segmented } from "./components.js";
+import { api, downloadUrl, get, post, saveBlob } from "./api.js";
+import { Brand, Field, LangSwitch, Spinner, ThemeSwitch, useErrorText, useFieldErrors, useToast, Segmented } from "./components.js";
 import { useI18n, type Lang } from "./i18n.js";
 import { useSession, type Theme } from "./session.js";
 
@@ -154,6 +154,7 @@ export function SignupPage({ app }: { app: string }) {
   const nav = useNavigate();
   const [params] = useSearchParams();
   const errText = useErrorText();
+  const fieldErrors = useFieldErrors();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [fields, setFields] = useState<Record<string, string>>({});
@@ -396,6 +397,7 @@ export function AccountSettings() {
   const { user, updateProfile, theme, setTheme } = useSession();
   const toast = useToast();
   const errText = useErrorText();
+  const fieldErrors = useFieldErrors();
   const [sessions, setSessions] = useState<any[]>([]);
   const [pwError, setPwError] = useState("");
   const loadSessions = () => get<{ sessions: any[] }>("/api/me/sessions").then((r) => setSessions(r.sessions), () => {});

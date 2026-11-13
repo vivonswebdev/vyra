@@ -113,11 +113,26 @@ export async function buildApp({ cfg, db, storage, scanner }: AppDeps): Promise<
         error: {
           code: "validation",
           message: err.issues[0]?.message ?? "Données invalides.",
-          details: err.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
+          // Code et limites de chaque problème : les applications en tirent un message traduit.
+          details: err.issues.map((i) => {
+            const x = i as { minimum?: unknown; maximum?: unknown; format?: unknown; origin?: unknown };
+            return {
+              path: i.path.join("."),
+              message: i.message,
+              issue: i.code,
+              ...(typeof x.origin === "string" ? { origin: x.origin } : {}),
+              ...(typeof x.minimum === "number" || typeof x.minimum === "bigint" ? { minimum: Number(x.minimum) } : {}),
+              ...(typeof x.maximum === "number" || typeof x.maximum === "bigint" ? { maximum: Number(x.maximum) } : {}),
+              ...(typeof x.format === "string" ? { format: x.format } : {}),
+            };
+          }),
         },
       });
     }
-    if (err instanceof HttpError) return reply.code(err.status).send({ error: { code: err.code, message: err.message, details: err.details } });
+    if (err instanceof HttpError)
+      return reply.code(err.status).send({
+        error: { code: err.code, ...(err.reason && err.reason !== err.code ? { reason: err.reason } : {}), ...(err.params ? { params: err.params } : {}), message: err.message, details: err.details },
+      });
     const e = err as { statusCode?: number; code?: string; message: string };
     if (e.statusCode && e.statusCode < 500) {
       const message = e.statusCode === 429 ? "Trop de requêtes. Patientez un instant." : e.statusCode === 413 ? "Contenu trop volumineux." : e.message;

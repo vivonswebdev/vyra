@@ -1,6 +1,7 @@
 // Traductions : français (langue source), néerlandais, anglais, arabe (de droite à gauche).
 // Une clé absente dans une langue retombe sur le français et est signalée en développement.
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { API_ERRORS } from "./api-errors.js";
 
 export type Lang = "fr" | "nl" | "en" | "ar";
 export const LANG_LABELS: Record<Lang, string> = { fr: "FR", nl: "NL", en: "EN", ar: "ع" };
@@ -288,6 +289,8 @@ const COMMON_EXTRA: Record<string, [string, string, string, string]> = {
   "account.deleteGo": ["Supprimer définitivement", "Definitief verwijderen", "Delete permanently", "حذف نهائي"],
 };
 for (const [k, v] of Object.entries(COMMON_EXTRA)) (["fr", "nl", "en", "ar"] as const).forEach((l, i) => (COMMON[l][k] = v[i]));
+// Erreurs de l'API (lot 3.1) : clés « apierr.<raison> ».
+for (const [k, v] of Object.entries(API_ERRORS)) (["fr", "nl", "en", "ar"] as const).forEach((l, i) => (COMMON[l]["apierr." + k] = v[i]));
 
 type TFn = (key: string, vars?: Record<string, string | number>) => string;
 interface I18nCtx {

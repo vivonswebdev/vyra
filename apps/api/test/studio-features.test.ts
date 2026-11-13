@@ -64,3 +64,46 @@ describe("import d'un projet .stitch.json de la v0.2", () => {
     expect((await c.post("/api/projects", { name: "Cassé", design: broken })).status).toBe(400);
   });
 });
+
+describe("erreurs traduisibles (lot 3.1)", () => {
+  it("chaque refus de nuancier porte une raison et ses paramètres", async () => {
+    const { c } = await signup(ctx.app);
+    const cases: [Record<string, unknown>, string, Record<string, unknown> | undefined][] = [
+      [{ ...base, source: "", csv: CSV }, "chart_no_source", undefined],
+      [{ ...base, csv: "code;nom\n1;a\n" }, "chart_no_color_column", undefined],
+      [{ ...base, csv: "code;hex\n1;#ffffff\n1;#000000\n" }, "chart_line_duplicate", { line: 2, code: "1" }],
+      [{ ...base, status: "officiel", source: "un site", csv: CSV }, "chart_official_source", undefined],
+      [{ ...base, csv: "code;hex\n1;#zzzzzz\n" }, "chart_line_color", { line: 1, value: "#zzzzzz" }],
+    ];
+    for (const [body, reason, params] of cases) {
+      const r = await c.post("/api/thread-charts", body);
+      expect(r.json.error).toMatchObject({ code: "bad_request", reason });
+      if (params) expect(r.json.error.params).toEqual(params);
+      expect(r.json.error.details[0].reason).toBe(reason);
+    }
+  });
+
+  it("chaque message du lecteur de nuanciers du moteur figé est rattaché à une raison précise", async () => {
+    const { chartReason } = await import("../src/routes/charts.js");
+    const src = fs.readFileSync(new URL("../../../packages/engine/src/generated/engine.js", import.meta.url), "utf8");
+    const body = src.slice(src.indexOf("function m_R3"), src.indexOf("function m_kb")) + src.slice(src.indexOf("function parseChartCsv"), src.indexOf("function parseChartCsv") + 3000);
+    const msgs = [...body.matchAll(/(?:push\(|errors: \[)\s*(["`])((?:Ligne|[A-Z]).*?)\1/g)].map((m) => m[2].replace(/\$\{[^}]+\}/g, "7"));
+    expect(msgs.length).toBeGreaterThanOrEqual(11);
+    for (const m of msgs) expect(chartReason(m).reason, m).not.toBe("chart_invalid");
+  });
+
+  it("erreurs de validation : code et limites de chaque champ", async () => {
+    const r = await ctx.app.inject({ method: "POST", url: "/api/auth/signup", headers: { "x-vyra-client": "web" }, payload: { email: "pas-un-email", password: "court", displayName: "", acceptTerms: false } });
+    const d = Object.fromEntries(r.json().error.details.map((x: any) => [x.path, x]));
+    expect(d.email).toMatchObject({ issue: "invalid_format", format: "email" });
+    expect(d.password).toMatchObject({ issue: "too_small", origin: "string", minimum: 10 });
+    expect(d.displayName).toMatchObject({ issue: "too_small", minimum: 1 });
+    expect(d.acceptTerms).toMatchObject({ issue: "invalid_value" });
+  });
+
+  it("raisons précises sur les refus courants", async () => {
+    const { c } = await signup(ctx.app);
+    expect((await c.get("/api/projects/00000000-0000-4000-8000-000000000000")).json.error).toMatchObject({ code: "not_found", reason: "project_not_found" });
+    expect((await c.post("/api/auth/change-password", { currentPassword: "faux-mot-de-passe", newPassword: "un-nouveau-mot-de-passe" })).json.error).toMatchObject({ reason: "wrong_current_password" });
+  });
+});
