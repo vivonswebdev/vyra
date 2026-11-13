@@ -15,6 +15,13 @@ const mailTimer = setInterval(() => flushOutbox(db, cfg).catch((e) => app.log.er
 const purgeTimer = setInterval(() => {
   db.query("DELETE FROM sessions WHERE expires_at < now()").catch((e) => app.log.error(e));
   db.query("DELETE FROM auth_tokens WHERE expires_at < now() - interval '7 days'").catch((e) => app.log.error(e));
+  db.query("DELETE FROM rate_limits WHERE reset_at < now()").catch((e) => app.log.error(e));
+  db.query("DELETE FROM auth_throttle WHERE window_start < now() - interval '1 day' AND (locked_until IS NULL OR locked_until < now())").catch((e) => app.log.error(e));
+  db.query("DELETE FROM mfa_challenges WHERE expires_at < now()").catch((e) => app.log.error(e));
+  // Comptes jamais confirmés depuis 7 jours et sans projet : supprimés.
+  db.query(
+    "DELETE FROM users WHERE email_verified_at IS NULL AND created_at < now() - interval '7 days' AND NOT EXISTS (SELECT 1 FROM projects p WHERE p.owner_id = users.id)",
+  ).catch((e) => app.log.error(e));
 }, 3600_000);
 
 const stop = async () => {

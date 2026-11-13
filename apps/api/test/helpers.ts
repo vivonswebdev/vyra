@@ -66,11 +66,16 @@ export class Client {
   del = (url: string, body?: unknown) => this.req("DELETE", url, body);
 }
 
+/** Inscription complète : demande, lecture du lien reçu par e-mail, confirmation (qui ouvre la session). */
 export async function signup(app: FastifyInstance, email = `u${Math.random().toString(36).slice(2, 8)}@example.com`) {
   const c = new Client(app);
   const r = await c.post("/api/auth/signup", { email, password: "un-mot-de-passe-solide", displayName: "Testeur", acceptTerms: true });
-  if (r.status !== 201) throw new Error("signup " + r.status + " " + JSON.stringify(r.json));
-  return { c, user: r.json.user, email };
+  if (r.status !== 202) throw new Error("signup " + r.status + " " + JSON.stringify(r.json));
+  const db = (app as any).db as Db;
+  const { rows } = await db.query("SELECT body_text FROM email_outbox WHERE to_email = $1 AND template = 'verify' ORDER BY id DESC LIMIT 1", [email]);
+  const v = await c.post("/api/auth/verify-email", { token: tokenFrom(rows[0].body_text) });
+  if (v.status !== 200 || !v.json.user) throw new Error("verify " + v.status + " " + JSON.stringify(v.json));
+  return { c, user: v.json.user, email };
 }
 
 export async function lastEmail(db: Db, to: string) {

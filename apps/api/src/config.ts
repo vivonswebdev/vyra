@@ -30,6 +30,10 @@ const Env = z.object({
   SESSION_DAYS: z.coerce.number().int().min(1).max(90).default(30),
   /** Requêtes par minute et par adresse IP sur les routes de connexion, inscription et réinitialisation. */
   AUTH_RATE_LIMIT: z.coerce.number().int().min(1).default(10),
+  /** « postgres » : compteurs partagés entre instances (défaut) ; « memory » : une seule instance. */
+  RATE_LIMIT_STORE: z.enum(["postgres", "memory"]).default("postgres"),
+  /** Préfixe des compteurs (utile pour isoler plusieurs environnements sur une même base). */
+  RATE_LIMIT_NAMESPACE: z.string().max(40).default(""),
   TRUST_PROXY: z.coerce.boolean().default(false),
   WEB_DIST_DIR: z.string().optional(),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
@@ -69,6 +73,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
     if (!parsed.SECRET_KEY || Buffer.from(parsed.SECRET_KEY, "base64").length !== 32) problems.push("SECRET_KEY (32 octets en base64) est requis en production : openssl rand -base64 32.");
     if (cfg.STORAGE_DRIVER === "s3" && (!cfg.S3_BUCKET || !cfg.S3_ACCESS_KEY_ID || !cfg.S3_SECRET_ACCESS_KEY))
       problems.push("STORAGE_DRIVER=s3 exige S3_BUCKET, S3_ACCESS_KEY_ID et S3_SECRET_ACCESS_KEY.");
+    if (cfg.RATE_LIMIT_STORE === "memory") problems.push("RATE_LIMIT_STORE=memory est refusé en production (compteurs non partagés entre instances).");
     if (cfg.DEV_MAILBOX) problems.push("DEV_MAILBOX est interdit en production (il expose les liens de connexion).");
     if (problems.length) throw new Error("Configuration de production refusée :\n- " + problems.join("\n- "));
   }

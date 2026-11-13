@@ -254,6 +254,8 @@ export const COMMON: Dicts = {
 
 // Textes ajoutés au lot 3 : [français, néerlandais, anglais, arabe].
 const COMMON_EXTRA: Record<string, [string, string, string, string]> = {
+  "auth.checkTitle": ["Vérifiez votre boîte e-mail", "Controleer je mailbox", "Check your inbox", "تحقّق من بريدك"],
+  "auth.checkInbox": ["Si l'adresse {email} peut être utilisée, un lien de confirmation vient d'y être envoyé. Ouvrez-le pour activer votre compte et vous connecter.", "Als het adres {email} gebruikt kan worden, is er net een bevestigingslink naartoe gestuurd. Open hem om je account te activeren en je aan te melden.", "If the address {email} can be used, a confirmation link has just been sent to it. Open it to activate your account and sign in.", "إذا كان العنوان {email} قابلًا للاستخدام فقد أُرسل إليه رابط تأكيد. افتحه لتفعيل حسابك وتسجيل الدخول."],
   "mfa.title": ["Vérification en deux étapes", "Verificatie in twee stappen", "Two-step verification", "التحقق بخطوتين"],
   "mfa.intro": ["Saisissez le code à 6 chiffres de votre application d'authentification.", "Voer de 6-cijferige code van je authenticatie-app in.", "Enter the 6-digit code from your authenticator app.", "أدخل الرمز المكوّن من 6 أرقام من تطبيق المصادقة."],
   "mfa.code": ["Code", "Code", "Code", "الرمز"],

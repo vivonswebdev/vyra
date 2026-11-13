@@ -18,6 +18,15 @@ const T = {
       ar: "مرحبًا {name}،\n\nأكّد عنوانك بفتح هذا الرابط (صالح لمدة 48 ساعة):\n{link}\n\nإذا لم تنشئ حسابًا في VYRA فتجاهل هذه الرسالة.",
     },
   },
+  exists: {
+    subject: { fr: "Tentative de création d'un compte VYRA", nl: "Poging om een VYRA-account aan te maken", en: "Attempt to create a VYRA account", ar: "محاولة إنشاء حساب في VYRA" },
+    body: {
+      fr: "Bonjour {name},\n\nQuelqu'un a demandé à créer un compte VYRA avec cette adresse, qui en possède déjà un. Si c'est vous, connectez-vous ou réinitialisez votre mot de passe :\n{link}\n\nSinon, ignorez ce message : rien n'a été modifié.",
+      nl: "Hallo {name},\n\nIemand wilde een VYRA-account aanmaken met dit adres, dat er al een heeft. Ben jij dat? Meld je aan of stel je wachtwoord opnieuw in:\n{link}\n\nAnders mag je dit bericht negeren: er is niets gewijzigd.",
+      en: "Hello {name},\n\nSomeone asked to create a VYRA account with this address, which already has one. If it was you, sign in or reset your password:\n{link}\n\nOtherwise, ignore this message: nothing was changed.",
+      ar: "مرحبًا {name}،\n\nطلب أحدهم إنشاء حساب في VYRA بهذا العنوان الذي لديه حساب بالفعل. إن كنت أنت فسجّل الدخول أو أعد تعيين كلمة المرور:\n{link}\n\nوإلا فتجاهل هذه الرسالة: لم يتغير شيء.",
+    },
+  },
   reset: {
     subject: { fr: "Réinitialisation de votre mot de passe VYRA", nl: "Je VYRA-wachtwoord opnieuw instellen", en: "Reset your VYRA password", ar: "إعادة تعيين كلمة مرور VYRA" },
     body: {
@@ -31,21 +40,28 @@ const T = {
 
 export type Template = keyof typeof T;
 
+/**
+ * Met un e-mail en file. Avec une clé anti-doublon, un même avis n'est jamais mis en file deux fois
+ * (par exemple une alerte par heure et par compte), même si plusieurs instances traitent la même action.
+ * Renvoie false si l'e-mail existait déjà.
+ */
 export async function queueEmail(
   q: Queryable,
   to: string,
   template: Template,
   lang: Lang,
-  vars: { name: string; link: string },
-): Promise<void> {
+  vars: { name: string; link?: string; [k: string]: string | undefined },
+  opts: { dedupeKey?: string } = {},
+): Promise<boolean> {
   const t = T[template];
-  const body = t.body[lang].replace("{name}", vars.name).replace("{link}", vars.link);
-  await q.query("INSERT INTO email_outbox (to_email, template, subject, body_text) VALUES ($1,$2,$3,$4)", [
-    to,
-    template,
-    t.subject[lang],
-    body,
-  ]);
+  let body: string = t.body[lang];
+  for (const [k, v] of Object.entries(vars)) body = body.split(`{${k}}`).join(v ?? "");
+  const r = await q.query(
+    `INSERT INTO email_outbox (to_email, template, subject, body_text, dedupe_key) VALUES ($1,$2,$3,$4,$5)
+     ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING`,
+    [to, template, t.subject[lang], body, opts.dedupeKey ?? null],
+  );
+  return (r.rowCount ?? 0) > 0;
 }
 
 /** Transmet les e-mails en attente au transport configuré. Retourne le nombre d'envois réussis. */

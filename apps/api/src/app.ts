@@ -12,6 +12,7 @@ import type { Db } from "./db/pool.js";
 import { HttpError } from "./lib/errors.js";
 import { LocalStorage, type Storage } from "./lib/storage.js";
 import { S3Storage } from "./lib/s3storage.js";
+import { pgRateLimitStore } from "./lib/ratelimit-pg.js";
 import authPlugin from "./plugins/auth.js";
 import authRoutes from "./routes/auth.js";
 import projectRoutes from "./routes/projects.js";
@@ -70,7 +71,13 @@ export async function buildApp({ cfg, db, storage }: AppDeps): Promise<FastifyIn
     },
     crossOriginEmbedderPolicy: false,
   });
-  await app.register(rateLimit, { global: true, max: 600, timeWindow: "1 minute" });
+  await app.register(rateLimit, {
+    global: true,
+    max: 600,
+    timeWindow: "1 minute",
+    ...(cfg.RATE_LIMIT_STORE === "postgres" ? { store: pgRateLimitStore(db, cfg.RATE_LIMIT_NAMESPACE) as any } : {}),
+    errorResponseBuilder: (_req, ctx) => ({ statusCode: 429, code: "rate_limited", message: `Trop de requêtes. Réessayez dans ${Math.ceil(ctx.ttl / 1000)} s.` }),
+  });
   await app.register(multipart);
 
   // Protection CSRF : toute requête d'écriture doit porter l'en-tête x-vyra-client (impossible à

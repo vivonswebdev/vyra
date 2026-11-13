@@ -7,11 +7,19 @@ export function uniqueEmail(tag = "e2e") {
   return `${tag}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}@example.com`;
 }
 
-/** Inscription par l'API : le cookie de session est partagé avec la page. */
+/** Inscription par l'API, confirmation par le lien reçu (boîte aux lettres de développement) : le cookie de session est partagé avec la page. */
 export async function signupApi(page: Page, email = uniqueEmail()) {
   const r = await page.request.post("/api/auth/signup", { headers: H, data: { email, password: PASSWORD, displayName: "Atelier E2E", acceptTerms: true, locale: "fr" } });
-  expect(r.status()).toBe(201);
+  expect(r.status()).toBe(202);
+  const v = await page.request.post("/api/auth/verify-email", { headers: H, data: { token: await mailToken(page, email, "verify") } });
+  expect(v.status()).toBe(200);
   return email;
+}
+
+export async function mailToken(page: Page, email: string, template: string) {
+  const mails = await (await page.request.get(`/api/dev/mailbox?to=${encodeURIComponent(email)}`)).json();
+  const m = mails.emails.find((x: any) => x.template === template);
+  return /token=([A-Za-z0-9_-]+)/.exec(m.body_text)![1];
 }
 
 export async function createBlankApi(page: Page, name = "Toile E2E") {

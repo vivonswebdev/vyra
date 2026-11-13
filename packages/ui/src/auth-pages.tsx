@@ -157,7 +157,26 @@ export function SignupPage({ app }: { app: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [fields, setFields] = useState<Record<string, string>>({});
+  const [sentTo, setSentTo] = useState("");
+  const toast = useToast();
   if (user) return <Navigate to={safeNext(params.get("next"))} replace />;
+  if (sentTo)
+    return (
+      <AuthShell app={app} title={t("auth.checkTitle")}>
+        <div className="alert ok" role="status" data-testid="signup-sent">
+          {t("auth.checkInbox", { email: sentTo })}
+        </div>
+        <button
+          className="btn"
+          onClick={() => post("/api/auth/resend-verification-email", { email: sentTo }).then(() => toast(t("auth.resent")), (e) => toast(errText(e), "error"))}
+        >
+          {t("auth.resend")}
+        </button>
+        <div className="auth-links">
+          <Link to="/login">{t("auth.backToLogin")}</Link>
+        </div>
+      </AuthShell>
+    );
   const submit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
@@ -165,15 +184,14 @@ export function SignupPage({ app }: { app: string }) {
     setError("");
     setFields({});
     try {
-      const r = await post<{ user: UserDTO }>("/api/auth/signup", {
+      await post("/api/auth/signup", {
         email: f.get("email"),
         password: f.get("password"),
         displayName: f.get("displayName"),
         acceptTerms: f.get("acceptTerms") === "on",
         locale: lang,
       });
-      setUser(r.user);
-      nav(safeNext(params.get("next")), { replace: true });
+      setSentTo(String(f.get("email") ?? ""));
     } catch (err) {
       const fe = fieldErrors(err);
       setFields(fe);
@@ -313,7 +331,8 @@ export function ResetPasswordPage({ app }: { app: string }) {
 
 export function VerifyEmailPage({ app }: { app: string }) {
   const { t } = useI18n();
-  const { setUser, user } = useSession();
+  const { setUser } = useSession();
+  const nav = useNavigate();
   const errText = useErrorText();
   const [params] = useSearchParams();
   const [state, setState] = useState<"busy" | "ok" | "error">("busy");
@@ -322,9 +341,12 @@ export function VerifyEmailPage({ app }: { app: string }) {
   useEffect(() => {
     if (done.current) return;
     done.current = true;
-    post<{ user: UserDTO }>("/api/auth/verify-email", { token: params.get("token") ?? "" })
+    post<{ user: UserDTO | null; loginRequired?: boolean }>("/api/auth/verify-email", { token: params.get("token") ?? "" })
       .then((r) => {
-        if (user) setUser(r.user);
+        if (r.user) {
+          setUser(r.user);
+          return nav("/", { replace: true });
+        }
         setState("ok");
       })
       .catch((e) => {

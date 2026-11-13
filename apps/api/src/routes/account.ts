@@ -148,6 +148,8 @@ export default async function accountRoutes(app: FastifyInstance) {
       const rc = newRecoveryCodes();
       await c.query("DELETE FROM user_recovery_codes WHERE user_id = $1", [u.id]);
       for (const h of rc.hashes) await c.query("INSERT INTO user_recovery_codes (user_id, code_hash) VALUES ($1, $2)", [u.id, h]);
+      // Les autres appareils, ouverts sans second facteur, sont déconnectés.
+      await c.query("DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2", [u.id, req.sessionHash]);
       await audit(c, { actorId: u.id, action: "account.2fa_enabled", subject: `user:${u.id}`, ip: req.ip });
       return rc.plain;
     });

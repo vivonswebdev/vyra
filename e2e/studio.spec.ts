@@ -1,7 +1,7 @@
 // Tests navigateur de VYRA Studio : ils vérifient le fonctionnement réel (données enregistrées
 // par l'API, fichiers exportés relus), pas la seule présence des composants.
 import { expect, test } from "@playwright/test";
-import { canvasBox, createBlankApi, drag, getProject, PASSWORD, signupApi, trackErrors, uniqueEmail, waitSaved } from "./helpers.js";
+import { canvasBox, createBlankApi, drag, getProject, mailToken, PASSWORD, signupApi, trackErrors, uniqueEmail, waitSaved } from "./helpers.js";
 
 test("parcours complet : compte, motif, modification, enregistrement, rechargement, export", async ({ page }) => {
   const errors = trackErrors(page);
@@ -14,6 +14,9 @@ test("parcours complet : compte, motif, modification, enregistrement, rechargeme
   await page.locator("input[name=password]").fill(PASSWORD);
   await page.locator("input[name=acceptTerms]").check();
   await page.getByRole("button", { name: "Créer un compte" }).click();
+  // Aucune session avant confirmation : le lien reçu par e-mail active le compte et connecte.
+  await expect(page.getByTestId("signup-sent")).toContainText(email);
+  await page.goto(`/account/verify?token=${await mailToken(page, email, "verify")}`);
   await expect(page.getByRole("heading", { name: "Mes projets" })).toBeVisible();
 
   // Création depuis le motif de test « Fleur » : analyse par le moteur dans un Web Worker.

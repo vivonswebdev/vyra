@@ -12,7 +12,8 @@ import {
 } from "@vyra/shared";
 import { tx } from "../db/pool.js";
 import { dummyHash, hashPassword, newToken, tokenHash, verifyPassword } from "../lib/crypto.js";
-import { badRequest, conflict, HttpError, unauthorized } from "../lib/errors.js";
+import { badRequest, HttpError, unauthorized } from "../lib/errors.js";
+import { clearFailures, isLocked, recordFailure } from "../lib/throttle.js";
 import { queueEmail } from "../lib/mailer.js";
 import { audit } from "../lib/audit.js";
 import { toSessionUser, USER_COLUMNS } from "../plugins/auth.js";
@@ -20,8 +21,6 @@ import { SecretBox } from "../lib/secretbox.js";
 import { checkSecondFactor } from "./account.js";
 import { z } from "zod";
 
-const LOCK_AFTER = 8; // échecs consécutifs
-const LOCK_MINUTES = 15;
 
 export default async function authRoutes(app: FastifyInstance) {
   const { db, cfg } = app;
@@ -35,56 +34,74 @@ export default async function authRoutes(app: FastifyInstance) {
     return toSessionUser(rows[0]);
   }
 
+  // Inscription : même réponse que l'adresse soit libre ou déjà utilisée (aucune énumération).
+  // Le compte n'est utilisable qu'après confirmation de l'adresse ; le lien reçu ouvre la session.
   app.post("/api/auth/signup", strict, async (req, reply) => {
     const input = SignupInput.parse(req.body);
     const passwordHash = await hashPassword(input.password);
-    const userId = await tx(db, async (c) => {
-      const exists = await c.query("SELECT 1 FROM users WHERE email = $1", [input.email]);
-      if (exists.rowCount) throw conflict("Un compte existe déjà avec cette adresse. Connectez-vous ou réinitialisez votre mot de passe.");
-      const { rows } = await c.query(
-        "INSERT INTO users (email, password_hash, display_name, locale) VALUES ($1,$2,$3,$4) RETURNING id",
-        [input.email, passwordHash, input.displayName, input.locale],
-      );
-      const id = rows[0].id as string;
+    await tx(db, async (c) => {
+      const { rows: found } = await c.query("SELECT id, display_name, locale, email_verified_at FROM users WHERE email = $1 FOR UPDATE", [input.email]);
+      const existing = found[0];
+      if (existing?.email_verified_at) {
+        // Avis au propriétaire, au plus un par heure.
+        await queueEmail(c, input.email, "exists", existing.locale, { name: existing.display_name, link: `${cfg.PUBLIC_URL}/studio/login` }, {
+          dedupeKey: `exists:${existing.id}:${new Date().toISOString().slice(0, 13)}`,
+        });
+        await audit(c, { actorId: existing.id, action: "account.signup_existing", subject: `user:${existing.id}`, ip: req.ip });
+        return;
+      }
+      let id: string;
+      if (existing) {
+        // Compte jamais confirmé : on remplace le mot de passe et on renvoie un lien (le premier lien devient caduc).
+        id = existing.id;
+        await c.query("UPDATE users SET password_hash = $2, display_name = $3, locale = $4, updated_at = now() WHERE id = $1", [id, passwordHash, input.displayName, input.locale]);
+        await c.query("UPDATE auth_tokens SET used_at = now() WHERE user_id = $1 AND purpose = 'verify_email' AND used_at IS NULL", [id]);
+      } else {
+        const { rows } = await c.query("INSERT INTO users (email, password_hash, display_name, locale) VALUES ($1,$2,$3,$4) RETURNING id", [
+          input.email,
+          passwordHash,
+          input.displayName,
+          input.locale,
+        ]);
+        id = rows[0].id;
+      }
       const { token, hash } = newToken();
-      await c.query(
-        "INSERT INTO auth_tokens (token_hash, user_id, purpose, expires_at) VALUES ($1,$2,'verify_email', now() + interval '48 hours')",
-        [hash, id],
-      );
+      await c.query("INSERT INTO auth_tokens (token_hash, user_id, purpose, expires_at) VALUES ($1,$2,'verify_email', now() + interval '48 hours')", [hash, id]);
       await queueEmail(c, input.email, "verify", input.locale, { name: input.displayName, link: link("/account/verify", token) });
       await audit(c, { actorId: id, action: "account.signup", subject: `user:${id}`, ip: req.ip });
-      await app.startSession(reply, req, id, c);
-      return id;
     });
-    reply.code(201);
-    return { user: await loadUser(userId) };
+    reply.code(202);
+    return { status: "verification_sent" };
   });
 
+  // Connexion : réponses identiques pour une adresse inconnue et un mauvais mot de passe ; le
+  // verrouillage (par adresse, partagé entre instances) s'applique aussi aux adresses inconnues.
   app.post("/api/auth/login", strict, async (req, reply) => {
     const input = LoginInput.parse(req.body);
-    const { rows } = await db.query(
-      "SELECT id, password_hash, status, locked_until, totp_enabled_at FROM users WHERE email = $1",
-      [input.email],
-    );
+    if (await isLocked(db, input.email)) throw new HttpError(429, "too_many_attempts", "Trop de tentatives pour cette adresse. Réessayez dans 15 minutes ou réinitialisez votre mot de passe.");
+    const { rows } = await db.query("SELECT id, password_hash, status, totp_enabled_at, email_verified_at, display_name, locale FROM users WHERE email = $1", [input.email]);
     const u = rows[0];
-    if (!u) {
-      await verifyPassword(input.password, await dummyHash());
-      throw unauthorized("Adresse e-mail ou mot de passe incorrect.");
+    const ok = await verifyPassword(input.password, u?.password_hash ?? (await dummyHash()));
+    if (!u || !ok) {
+      await recordFailure(db, input.email);
+      if (u) await audit(db, { actorId: u.id, action: "account.login_failed", subject: `user:${u.id}`, ip: req.ip });
+      throw new HttpError(401, "invalid_credentials", "Adresse e-mail ou mot de passe incorrect.");
     }
-    if (u.locked_until && new Date(u.locked_until) > new Date())
-      throw new HttpError(429, "locked", "Trop de tentatives. Réessayez dans quelques minutes ou réinitialisez votre mot de passe.");
-    const ok = await verifyPassword(input.password, u.password_hash);
-    if (!ok || u.status !== "active") {
-      await db.query(
-        `UPDATE users SET failed_logins = failed_logins + 1,
-           locked_until = CASE WHEN failed_logins + 1 >= $2 THEN now() + make_interval(mins => $3) ELSE locked_until END
-         WHERE id = $1`,
-        [u.id, LOCK_AFTER, LOCK_MINUTES],
+    // À partir d'ici le mot de passe est prouvé : les réponses peuvent être précises.
+    await clearFailures(db, input.email);
+    if (u.status !== "active") throw new HttpError(403, "account_suspended", "Ce compte est suspendu.");
+    if (!u.email_verified_at) {
+      const { token, hash } = newToken();
+      const fresh = await db.query(
+        "SELECT 1 FROM auth_tokens WHERE user_id = $1 AND purpose = 'verify_email' AND used_at IS NULL AND created_at > now() - interval '5 minutes'",
+        [u.id],
       );
-      await audit(db, { actorId: u.id, action: "account.login_failed", subject: `user:${u.id}`, ip: req.ip });
-      throw unauthorized(u.status === "active" ? "Adresse e-mail ou mot de passe incorrect." : "Ce compte est suspendu.");
+      if (!fresh.rowCount) {
+        await db.query("INSERT INTO auth_tokens (token_hash, user_id, purpose, expires_at) VALUES ($1,$2,'verify_email', now() + interval '48 hours')", [hash, u.id]);
+        await queueEmail(db, input.email, "verify", u.locale, { name: u.display_name, link: link("/account/verify", token) });
+      }
+      throw new HttpError(403, "email_unverified", "Confirmez d'abord votre adresse e-mail : un nouveau lien vient de vous être envoyé.");
     }
-    await db.query("UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = $1", [u.id]);
     if (u.totp_enabled_at) {
       // Deuxième étape : aucune session n'est ouverte tant que le code n'est pas vérifié.
       const { token, hash } = newToken();
@@ -128,7 +145,7 @@ export default async function authRoutes(app: FastifyInstance) {
 
   app.get("/api/auth/me", async (req) => ({ user: req.user }));
 
-  app.post("/api/auth/verify-email", strict, async (req) => {
+  app.post("/api/auth/verify-email", strict, async (req, reply) => {
     const { token } = VerifyEmailInput.parse(req.body);
     const userId = await tx(db, async (c) => {
       const { rows } = await c.query(
@@ -142,7 +159,27 @@ export default async function authRoutes(app: FastifyInstance) {
       await audit(c, { actorId: rows[0].user_id, action: "account.email_verified", subject: `user:${rows[0].user_id}`, ip: req.ip });
       return rows[0].user_id as string;
     });
+    // Le lien prouve la possession de l'adresse : il ouvre la session, sauf si la 2FA est active.
+    const { rows: mfa } = await db.query("SELECT totp_enabled_at FROM users WHERE id = $1", [userId]);
+    if (mfa[0].totp_enabled_at) return { user: null, loginRequired: true };
+    if (req.user?.id !== userId) await app.startSession(reply, req, userId);
     return { user: await loadUser(userId) };
+  });
+
+  // Renvoi du lien sans session : réponse identique que l'adresse existe ou non.
+  app.post("/api/auth/resend-verification-email", strict, async (req) => {
+    const { email } = ForgotPasswordInput.parse(req.body);
+    await tx(db, async (c) => {
+      const { rows } = await c.query("SELECT id, display_name, locale FROM users WHERE email = $1 AND email_verified_at IS NULL AND status = 'active'", [email]);
+      const u = rows[0];
+      if (!u) return;
+      const { token, hash } = newToken();
+      const queued = await queueEmail(c, email, "verify", u.locale, { name: u.display_name, link: link("/account/verify", token) }, {
+        dedupeKey: `resend:${u.id}:${Math.floor(Date.now() / 300_000)}`,
+      });
+      if (queued) await c.query("INSERT INTO auth_tokens (token_hash, user_id, purpose, expires_at) VALUES ($1,$2,'verify_email', now() + interval '48 hours')", [hash, u.id]);
+    });
+    return { ok: true };
   });
 
   app.post("/api/auth/resend-verification", strict, async (req) => {
