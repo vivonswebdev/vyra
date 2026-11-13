@@ -52,3 +52,19 @@ async function applyAll(db: Db, done: Map<string, string>, log: (m: string) => v
   }
   return applied;
 }
+
+/** État des migrations : appliquées, en attente, modifiées après application (anomalie). */
+export async function migrationStatus(db: Db): Promise<{ applied: string[]; pending: string[]; modified: string[] }> {
+  await db.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
+    name text PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())`);
+  const done = new Map<string, string>((await db.query("SELECT name, checksum FROM schema_migrations")).rows.map((r) => [r.name, r.checksum]));
+  const files = fs.readdirSync(DIR).filter((f) => /^\d{3}_.+\.sql$/.test(f)).sort();
+  const out = { applied: [] as string[], pending: [] as string[], modified: [] as string[] };
+  for (const f of files) {
+    const sum = crypto.createHash("sha256").update(fs.readFileSync(path.join(DIR, f), "utf8")).digest("hex");
+    if (!done.has(f)) out.pending.push(f);
+    else if (done.get(f) !== sum) out.modified.push(f);
+    else out.applied.push(f);
+  }
+  return out;
+}

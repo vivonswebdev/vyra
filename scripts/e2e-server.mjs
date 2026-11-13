@@ -11,7 +11,8 @@ await db.connect();
 await db.query("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;");
 await db.end();
 const storage = fs.mkdtempSync(path.join(os.tmpdir(), "vyra-e2e-"));
-const child = spawn("npx", ["tsx", "apps/api/src/server.ts"], {
+// Le serveur testé est la version compilée pour la production (npm run build).
+const child = spawn(process.execPath, ["dist/api/server.mjs"], {
   stdio: "inherit",
   env: {
     ...process.env,

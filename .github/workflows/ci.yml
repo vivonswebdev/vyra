@@ -67,3 +67,15 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - name: Tests navigateur (ordinateur, tablette, mobile)
         run: npm run test:e2e
+      - name: Archive de version et test de fumée en production (vrais services)
+        run: |
+          node scripts/release.mjs "$RUNNER_TEMP/release"
+          PGPASSWORD=vyra psql -h 127.0.0.1 -U vyra -d vyra_test -c "CREATE DATABASE vyra_smoke"
+          node scripts/smoke-release.mjs "$(ls "$RUNNER_TEMP"/release/*.tar.gz)"
+        env:
+          SMOKE_DATABASE_URL: postgres://vyra:vyra@127.0.0.1:5432/vyra_smoke
+          S3_TEST_ENDPOINT: http://127.0.0.1:9000
+          S3_TEST_ACCESS_KEY: vyra-ci-admin
+          S3_TEST_SECRET_KEY: vyra-ci-secret-123
+          SMTP_TEST_URL: smtp://127.0.0.1:1025
+          MAILPIT_TEST_API: http://127.0.0.1:8025

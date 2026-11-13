@@ -49,6 +49,8 @@ const Env = z.object({
   CLAMD_HOST: z.string().default("127.0.0.1"),
   CLAMD_PORT: z.coerce.number().int().default(3310),
   CLAMD_TIMEOUT_MS: z.coerce.number().int().min(100).default(15_000),
+  /** Jeton d'accès aux métriques Prometheus (/api/metrics) ; sans jeton, la route n'existe pas. */
+  METRICS_TOKEN: z.string().min(24).optional(),
   /** Boîte aux lettres de développement (/dev/mailbox) : expose les liens de connexion, jamais en production. */
   DEV_MAILBOX: z.stringbool().default(false),
   /** Calculs du moteur côté serveur : workers, délai maximal, file d'attente, mémoire par worker. */

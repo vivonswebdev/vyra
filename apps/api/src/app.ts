@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import cookie from "@fastify/cookie";
@@ -20,6 +21,7 @@ import projectRoutes from "./routes/projects.js";
 import accountRoutes from "./routes/account.js";
 import chartRoutes from "./routes/charts.js";
 import devRoutes from "./routes/dev.js";
+import opsRoutes from "./routes/ops.js";
 import { EnginePool } from "./engine/pool.js";
 
 declare module "fastify" {
@@ -45,9 +47,16 @@ export async function buildApp({ cfg, db, storage, scanner }: AppDeps): Promise<
   const app = Fastify({
     logger: cfg.LOG_LEVEL === "silent" ? false : { level: cfg.LOG_LEVEL, redact: ["req.headers.cookie", "req.headers.authorization"] },
     trustProxy: cfg.TRUST_PROXY,
+    // Identifiant de requête : repris du proxy (x-request-id) s'il est sûr, sinon généré ; renvoyé au client.
+    requestIdHeader: "x-request-id",
+    genReqId: () => crypto.randomUUID(),
     bodyLimit: 2 * 1024 * 1024,
   });
 
+  app.addHook("onRequest", async (req, reply) => {
+    if (!/^[A-Za-z0-9-]{8,64}$/.test(String(req.id))) (req as any).id = crypto.randomUUID();
+    reply.header("x-request-id", req.id);
+  });
   app.decorate("db", db);
   app.decorate("cfg", cfg);
   app.decorate("storage", storage ?? createStorage(cfg));
@@ -120,10 +129,7 @@ export async function buildApp({ cfg, db, storage, scanner }: AppDeps): Promise<
 
   await app.register(authPlugin);
 
-  app.get("/api/health", async () => {
-    await db.query("SELECT 1");
-    return { ok: true, service: "vyra-api", version: "0.3.0", time: new Date().toISOString() };
-  });
+  await app.register(opsRoutes);
 
   await app.register(authRoutes);
   await app.register(accountRoutes);

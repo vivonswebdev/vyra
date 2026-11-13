@@ -2,23 +2,33 @@
   "name": "vyra-platform",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*", "apps/*"],
-  "engines": { "node": ">=22" },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "engine:extract": "node packages/engine/scripts/extract.mjs",
-    "db:migrate": "npm run migrate -w @vyra/api",
-    "db:seed": "npm run seed -w @vyra/api",
+    "db:migrate": "node dist/api/migrate.mjs",
     "dev": "node scripts/dev.mjs",
-    "build": "npm run build -w @vyra/studio",
-    "start": "npm run start -w @vyra/api",
+    "build": "npm run build -w @vyra/studio && node scripts/build-api.mjs",
+    "start": "node dist/api/server.mjs",
     "typecheck": "tsc -p packages/engine && tsc -p packages/shared && tsc -p packages/ui && tsc -p apps/api && tsc -p apps/studio",
     "test": "vitest run",
     "test:e2e": "npm run build && playwright test --trace off",
-    "verify:references": "node packages/engine/scripts/verify-references.mjs"
+    "verify:references": "node packages/engine/scripts/verify-references.mjs",
+    "build:api": "node scripts/build-api.mjs",
+    "start:dev": "npm run start -w @vyra/api",
+    "db:status": "node dist/api/migrate.mjs --status",
+    "release": "node scripts/release.mjs",
+    "smoke:release": "node scripts/smoke-release.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
     "@types/node": "^22.10.0",
+    "esbuild": "^0.28.2",
     "tsx": "^4.20.0",
     "typescript": "~5.9.0",
     "vitest": "^5.1.0"

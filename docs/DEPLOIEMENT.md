@@ -3,72 +3,81 @@
 **Rien n'est déployé publiquement.** Ce document décrit la procédure ; elle demande votre accord, un hébergeur,
 un domaine et des secrets que je n'ai ni créés ni configurés.
 
-## Ce qui a été vérifié ici
-
-- Démarrage en `NODE_ENV=production` (12/11/2026) : migrations appliquées, `/api/health` répond, Studio servi,
-  HSTS et CSP présents, cookie `__Host-vyra_session; HttpOnly; Secure; SameSite=Lax`, boîte aux lettres de
-  développement absente.
-- Configuration de production refusée si un réglage dangereux est présent (10 cas testés).
-- Sauvegarde puis restauration complète dans une autre base et un autre dossier.
-
-Non vérifié ici : image conteneur (pas de Docker dans cet environnement), envoi réel d'e-mails (Brevo), stockage
-S3 réel (testé contre un serveur local qui vérifie les signatures), certificat TLS, sauvegardes planifiées.
-
-## Architecture minimale
-
-```
-Internet ── HTTPS (proxy inverse : Caddy, Nginx ou plateforme) ── API Node 22 (sert aussi /studio/)
-                                                                    ├── PostgreSQL 16 (UE)
-                                                                    └── Stockage objet S3 privé (UE)
-```
-
-Hébergeurs européens possibles : Scaleway, OVHcloud, Clever Cloud (application) ; base gérée PostgreSQL du même
-fournisseur ou Supabase (région UE) utilisée comme simple PostgreSQL.
-
-## Variables d'environnement
-
-| Variable | Obligatoire en production | Rôle |
-|---|---|---|
-| `NODE_ENV=production` | oui | active les garde-fous |
-| `PUBLIC_URL` | oui, en `https://` | origine publique (cookies, liens des e-mails, CSRF) |
-| `SECRET_KEY` | oui | 32 octets base64 (`openssl rand -base64 32`) : chiffrement des secrets 2FA |
-| `DATABASE_URL` | oui | PostgreSQL 16 |
-| `MAIL_TRANSPORT=brevo`, `BREVO_API_KEY`, `MAIL_FROM` | oui | e-mails de vérification et de réinitialisation |
-| `STORAGE_DRIVER=s3`, `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_SSE` | recommandé | stockage privé ; sinon `STORAGE_DIR` sur un volume persistant |
-| `TRUST_PROXY=true` | derrière un proxy | adresse IP réelle pour la limitation de débit |
-| `ENGINE_WORKERS`, `ENGINE_TIMEOUT_MS`, `ENGINE_QUEUE`, `ENGINE_MEMORY_MB` | non | calculs du moteur (défauts : 2, 20 000 ms, 20, 512 Mo) |
-| `PAYMENTS_PROVIDER=none` | — | tant que le Market n'est pas ouvert ; `sandbox` est refusé en production |
-| `DEV_MAILBOX` | **interdit** | refusé au démarrage en production |
-
-## Procédure
+## Version de production reproductible
 
 ```bash
-npm ci && npm run build
+npm ci && npm run build            # Studio (Vite) + API compilée (esbuild) dans dist/
 ```
 
 ```bash
-NODE_ENV=production WEB_DIST_DIR=$PWD/dist/web npm start
+node scripts/release.mjs release/  # archive vyra-<version>-<commit>.tar.gz + empreinte .sha256
 ```
 
-Le serveur applique les migrations au démarrage (verrou PostgreSQL : plusieurs instances peuvent démarrer
-ensemble). Le compartiment S3 doit être **privé**, sans accès public ni politique de lecture anonyme.
+Sur le serveur : vérifier l'empreinte, extraire, puis
+
+```bash
+npm ci --omit=dev --ignore-scripts
+```
+
+```bash
+NODE_ENV=production node dist/api/server.mjs
+```
+
+L'API compilée n'utilise plus `tsx`. Le moteur figé est intégré tel quel au worker de calcul
+(`dist/api/worker.mjs`). `scripts/smoke-release.mjs` installe une archive comme en production et la vérifie avec
+de vrais services (PostgreSQL, ClamAV, S3, SMTP) : exécuté en local et dans la CI.
+
+## Configuration
+
+Voir `.env.example`. La configuration de production est **refusée au démarrage** si : `SECRET_KEY` absent,
+`PUBLIC_URL` non HTTPS, transport d'e-mails absent, antivirus absent (`FILE_SCAN=clamd` obligatoire),
+limitation de débit en mémoire, boîte aux lettres de développement activée, paiement en bac à sable,
+S3 incomplet. Aucun secret n'est versionné.
+
+## Santé, supervision, journaux
+
+| Point | Rôle |
+|---|---|
+| `GET /api/health` | vivacité du processus (sondes de redémarrage) |
+| `GET /api/ready` | disponibilité : base, migrations à jour, stockage (écriture/lecture/suppression), moteur, antivirus, file d'e-mails ; 503 si l'un échoue |
+| `GET /api/metrics` | métriques Prometheus (requêtes par statut, durée, tâches du moteur, file d'e-mails, fichiers par état d'analyse, mémoire) ; exige `Authorization: Bearer $METRICS_TOKEN` |
+| `deploy/prometheus-alerts.yml` | 7 règles d'alerte (indisponibilité, 5xx, e-mails, moteur, antivirus, mémoire) — **préparées, non branchées** |
+
+Journaux : JSON (pino) sur la sortie standard, un objet par ligne : `level`, `time`, `reqId`, `req.method`,
+`req.url`, `res.statusCode`, `responseTime`, `msg`. Cookies et en-têtes d'autorisation masqués. Chaque réponse porte
+`x-request-id` (repris du proxy s'il est sûr). Les événements de sécurité (connexions, 2FA, fichiers infectés,
+suppressions) sont aussi dans la table `audit_log`.
+
+## Migrations et retour arrière
+
+```bash
+node dist/api/migrate.mjs --status   # appliquées / en attente / modifiées (code 1 si en attente, 2 si anomalie)
+```
+
+Procédure de mise à jour :
+
+1. `node scripts/backup.mjs <dossier>` (base + stockage, manifeste d'empreintes) ;
+2. arrêter l'ancienne version ; démarrer la nouvelle : elle applique les migrations (verrou PostgreSQL, une
+   seule instance migre) ;
+3. vérifier `/api/ready`.
+
+Les migrations ne se défont pas (pas de « down ») : **retour arrière = arrêter la nouvelle version, restaurer la
+sauvegarde de l'étape 1** (`node scripts/restore.mjs <sauvegarde> --remplacer`), redémarrer l'archive précédente.
+Les données écrites entre la mise à jour et le retour arrière sont perdues : prévoir une fenêtre de maintenance.
 
 ## Sauvegardes
 
-```bash
-DATABASE_URL=… STORAGE_DIR=… node scripts/backup.mjs /chemin/sauvegardes
-```
+`scripts/backup.mjs` et `scripts/restore.mjs` gèrent la base et le stockage (dossier local ou S3, testés contre
+MinIO). `pg_dump` / `pg_restore` doivent avoir la même version majeure que le serveur (16). Planifier une
+sauvegarde quotidienne hors du serveur, activer le versionnage S3 chez le fournisseur, **tester une restauration**
+à chaque version.
 
-```bash
-DATABASE_URL=<cible> STORAGE_DIR=<cible> node scripts/restore.mjs /chemin/sauvegardes/vyra-<date>
-```
+## Services externes requis
 
-`pg_dump` et `pg_restore` doivent avoir la même version majeure que le serveur. Avec le stockage S3, activer le
-versionnage et la réplication côté fournisseur. Planifier au moins une sauvegarde quotidienne hors du serveur et
-**tester une restauration** à chaque changement de version.
-
-## Limites connues
-
-- L'API s'exécute avec `tsx` (TypeScript à la volée). Une compilation préalable réduirait le temps de démarrage.
-- Pas encore de supervision (métriques, alertes) ni de journalisation centralisée.
-- La limitation de débit est en mémoire : avec plusieurs instances, prévoir un stockage partagé (Redis).
+| Service | Testé avec | Reste à faire avant ouverture |
+|---|---|---|
+| PostgreSQL 16 | réel (local, CI) | instance gérée en UE, sauvegardes du fournisseur |
+| Stockage S3 | MinIO réel (local, CI) | compartiment privé chez un fournisseur UE, test de conformité avec ses identifiants |
+| SMTP | Mailpit réel (local, CI) | fournisseur d'envoi, SPF/DKIM/DMARC, envoi de chaque modèle |
+| ClamAV | clamd réel, signatures de TEST | clamd + freshclam avec signatures officielles, supervisé |
+| Supervision | métriques et règles prêtes | Prometheus/Grafana (ou équivalent) branché, destinataires des alertes |

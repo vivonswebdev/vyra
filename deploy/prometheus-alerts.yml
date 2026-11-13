@@ -1,0 +1,39 @@
+# Règles d'alerte Prometheus pour VYRA (à charger dans Prometheus / Grafana Alloy / Alertmanager).
+# Préparées et vérifiées syntaxiquement ; non branchées sur un système de supervision réel.
+groups:
+  - name: vyra
+    rules:
+      - alert: VyraIndisponible
+        expr: probe_success{job="vyra-ready"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations: { summary: "/api/ready répond en échec depuis 2 minutes (base, stockage, antivirus, moteur ou e-mails)." }
+      - alert: VyraErreurs5xx
+        expr: sum(rate(vyra_http_requests_total{status="5xx"}[5m])) / sum(rate(vyra_http_requests_total[5m])) > 0.02
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "Plus de 2 % de réponses 5xx sur 5 minutes." }
+      - alert: VyraEmailsEnEchec
+        expr: vyra_email_outbox{state="failed"} > 0
+        for: 1m
+        labels: { severity: warning }
+        annotations: { summary: "Des e-mails ont échoué 5 fois : vérifier le transport (SMTP / Brevo)." }
+      - alert: VyraEmailsEnAttente
+        expr: vyra_email_outbox{state="pending"} > 50
+        for: 10m
+        labels: { severity: warning }
+        annotations: { summary: "File d'e-mails en croissance : envoyeur bloqué ?" }
+      - alert: VyraMoteurSature
+        expr: increase(vyra_engine_tasks_total{result=~"timeouts|rejected|crashes"}[15m]) > 5
+        labels: { severity: warning }
+        annotations: { summary: "Calculs du moteur interrompus ou refusés (délai, saturation, plantage)." }
+      - alert: VyraAnalyseAntivirusEnErreur
+        expr: vyra_files{scan_status="error"} > 0
+        for: 15m
+        labels: { severity: warning }
+        annotations: { summary: "Fichiers en quarantaine faute d'analyse antivirus : vérifier clamd et freshclam." }
+      - alert: VyraMemoire
+        expr: vyra_process_resident_memory_bytes > 1.5e9
+        for: 10m
+        labels: { severity: warning }
+        annotations: { summary: "Mémoire du processus API supérieure à 1,5 Go." }
