@@ -10,6 +10,7 @@ import { audit } from "../lib/audit.js";
 import { newStorageKey } from "../lib/storage.js";
 import { sha256Hex } from "../lib/crypto.js";
 import { sniffImage } from "../lib/sniff.js";
+import { quarantineAndScan, servableStates } from "../lib/quarantine.js";
 
 const AUTO_SNAPSHOT_MINUTES = 10;
 const KEEP_AUTO_SNAPSHOTS = 50;
@@ -259,18 +260,20 @@ export default async function projectRoutes(app: FastifyInstance) {
     if (part.file.truncated) throw badRequest("Fichier trop volumineux (20 Mo au plus).");
     const kind = sniffImage(bytes, part.filename);
     if (!kind) throw badRequest("Format refusé : PNG, JPG, WEBP, BMP, SVG ou PDF uniquement.");
-    const key = newStorageKey("sources", kind.ext);
-    await storage.put(key, bytes);
-    const file = await tx(db, async (c) => {
-      const { rows } = await c.query(
-        `INSERT INTO files (owner_id, kind, storage_key, filename, mime, size_bytes, sha256)
-         VALUES ($1,'source_image',$2,$3,$4,$5,$6) RETURNING id, filename, mime, size_bytes, sha256, created_at`,
-        [u.id, key, cleanName(part.filename), kind.mime, bytes.length, sha256Hex(bytes)],
-      );
-      await c.query("INSERT INTO project_files (project_id, file_id, role) VALUES ($1,$2,'source')", [id, rows[0].id]);
-      return rows[0];
+    // Quarantaine puis analyse antivirus : le fichier n'est rattaché au projet que s'il est sain.
+    const file = await quarantineAndScan(app, db, {
+      ownerId: u.id,
+      kind: "source_image",
+      prefix: "sources",
+      ext: kind.ext,
+      filename: cleanName(part.filename),
+      mime: kind.mime,
+      bytes,
+      sha256: sha256Hex(bytes),
+      ip: req.ip,
     });
-    return { file: { id: file.id, kind: "source_image", filename: file.filename, mime: file.mime, size: Number(file.size_bytes), sha256: file.sha256, createdAt: new Date(file.created_at).toISOString() } };
+    await db.query("INSERT INTO project_files (project_id, file_id, role) VALUES ($1,$2,'source')", [id, file.id]);
+    return { file: { id: file.id, kind: "source_image", filename: file.filename, mime: file.mime, size: Number(file.size_bytes), sha256: file.sha256, createdAt: new Date(file.created_at).toISOString(), scanStatus: file.scan_status } };
   });
 
   // ---------------------------------------------------------------- Exports machine (moteur exécuté par le serveur)
@@ -297,8 +300,8 @@ export default async function projectRoutes(app: FastifyInstance) {
     await storage.put(key, bytes);
     const dto = await tx(db, async (c) => {
       const { rows: f } = await c.query(
-        `INSERT INTO files (owner_id, kind, storage_key, filename, mime, size_bytes, sha256)
-         VALUES ($1,'export',$2,$3,'application/octet-stream',$4,$5) RETURNING id`,
+        `INSERT INTO files (owner_id, kind, storage_key, filename, mime, size_bytes, sha256, scan_status)
+         VALUES ($1,'export',$2,$3,'application/octet-stream',$4,$5,'not_required') RETURNING id`,
         [u.id, key, filename, bytes.length, sha256Hex(bytes)],
       );
       const { rows } = await c.query(
@@ -341,8 +344,8 @@ export default async function projectRoutes(app: FastifyInstance) {
     const u = app.requireUser(req);
     const { id } = Id.parse(req.params);
     const { rows } = await db.query(
-      "SELECT storage_key, filename, mime FROM files WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL AND kind = 'source_image'",
-      [id, u.id],
+      "SELECT storage_key, filename, mime FROM files WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL AND kind = 'source_image' AND scan_status = ANY($3)",
+      [id, u.id, servableStates(app)],
     );
     if (!rows[0]) throw notFound("Fichier introuvable.");
     return sendFile(reply, await storage.get(rows[0].storage_key), rows[0].filename, rows[0].mime);

@@ -13,6 +13,7 @@ import { HttpError } from "./lib/errors.js";
 import { LocalStorage, type Storage } from "./lib/storage.js";
 import { S3Storage } from "./lib/s3storage.js";
 import { pgRateLimitStore } from "./lib/ratelimit-pg.js";
+import { ClamdScanner, NoScanner, type FileScanner } from "./lib/scanner.js";
 import authPlugin from "./plugins/auth.js";
 import authRoutes from "./routes/auth.js";
 import projectRoutes from "./routes/projects.js";
@@ -25,6 +26,7 @@ declare module "fastify" {
   interface FastifyInstance {
     storage: Storage;
     engine: EnginePool;
+    scanner: FileScanner;
   }
 }
 
@@ -32,13 +34,14 @@ export interface AppDeps {
   cfg: Config;
   db: Db;
   storage?: Storage;
+  scanner?: FileScanner;
 }
 
 const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 /** Routes appelées par des services externes, authentifiées par signature et non par cookie. */
 const CSRF_EXEMPT = [/^\/api\/webhooks\//];
 
-export async function buildApp({ cfg, db, storage }: AppDeps): Promise<FastifyInstance> {
+export async function buildApp({ cfg, db, storage, scanner }: AppDeps): Promise<FastifyInstance> {
   const app = Fastify({
     logger: cfg.LOG_LEVEL === "silent" ? false : { level: cfg.LOG_LEVEL, redact: ["req.headers.cookie", "req.headers.authorization"] },
     trustProxy: cfg.TRUST_PROXY,
@@ -48,6 +51,7 @@ export async function buildApp({ cfg, db, storage }: AppDeps): Promise<FastifyIn
   app.decorate("db", db);
   app.decorate("cfg", cfg);
   app.decorate("storage", storage ?? createStorage(cfg));
+  app.decorate("scanner", scanner ?? (cfg.FILE_SCAN === "clamd" ? new ClamdScanner(cfg.CLAMD_HOST, cfg.CLAMD_PORT, cfg.CLAMD_TIMEOUT_MS) : new NoScanner()));
   const engine = new EnginePool({ size: cfg.ENGINE_WORKERS, timeoutMs: cfg.ENGINE_TIMEOUT_MS, maxQueue: cfg.ENGINE_QUEUE, maxMemoryMb: cfg.ENGINE_MEMORY_MB });
   app.decorate("engine", engine);
   app.addHook("onClose", async () => engine.close());

@@ -39,6 +39,11 @@ const Env = z.object({
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
   /** Clé de chiffrement des secrets (32 octets en base64). Obligatoire en production. */
   SECRET_KEY: z.string().optional(),
+  /** Analyse antivirus des fichiers déposés : « clamd » (obligatoire en production) ou « off » (développement). */
+  FILE_SCAN: z.enum(["off", "clamd"]).default("off"),
+  CLAMD_HOST: z.string().default("127.0.0.1"),
+  CLAMD_PORT: z.coerce.number().int().default(3310),
+  CLAMD_TIMEOUT_MS: z.coerce.number().int().min(100).default(15_000),
   /** Boîte aux lettres de développement (/dev/mailbox) : expose les liens de connexion, jamais en production. */
   DEV_MAILBOX: z.stringbool().default(false),
   /** Calculs du moteur côté serveur : workers, délai maximal, file d'attente, mémoire par worker. */
@@ -73,6 +78,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
     if (!parsed.SECRET_KEY || Buffer.from(parsed.SECRET_KEY, "base64").length !== 32) problems.push("SECRET_KEY (32 octets en base64) est requis en production : openssl rand -base64 32.");
     if (cfg.STORAGE_DRIVER === "s3" && (!cfg.S3_BUCKET || !cfg.S3_ACCESS_KEY_ID || !cfg.S3_SECRET_ACCESS_KEY))
       problems.push("STORAGE_DRIVER=s3 exige S3_BUCKET, S3_ACCESS_KEY_ID et S3_SECRET_ACCESS_KEY.");
+    if (cfg.FILE_SCAN !== "clamd") problems.push("FILE_SCAN=clamd est obligatoire en production (quarantaine et analyse antivirus des fichiers déposés).");
     if (cfg.RATE_LIMIT_STORE === "memory") problems.push("RATE_LIMIT_STORE=memory est refusé en production (compteurs non partagés entre instances).");
     if (cfg.DEV_MAILBOX) problems.push("DEV_MAILBOX est interdit en production (il expose les liens de connexion).");
     if (problems.length) throw new Error("Configuration de production refusée :\n- " + problems.join("\n- "));

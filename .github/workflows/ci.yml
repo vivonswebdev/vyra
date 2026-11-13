@@ -29,12 +29,21 @@ jobs:
       - name: Client PostgreSQL 16 (pg_dump / pg_restore pour le test de sauvegarde)
         run: sudo apt-get update && sudo apt-get install -y postgresql-client-16
       - run: npm ci
+      - name: ClamAV (moteur réel, base de signatures de TEST EICAR)
+        run: |
+          sudo apt-get install -y clamav-daemon
+          sudo systemctl stop clamav-daemon clamav-freshclam || true
+          node scripts/clamav-test-db.mjs "$RUNNER_TEMP/clamav" 3310
+          clamd --config-file="$RUNNER_TEMP/clamav/clamd.conf"
+          for i in $(seq 1 30); do printf 'zPING\0' | timeout 2 nc -q1 127.0.0.1 3310 | grep -q PONG && break; sleep 1; done
       - run: npm audit --audit-level=high
       - run: npm run typecheck
       - name: Gel du moteur et empreintes de référence v0.2.0
         run: npx vitest run --project engine
-      - name: Tests unitaires, API (PostgreSQL) et traductions
+      - name: Tests unitaires, API (PostgreSQL), antivirus (ClamAV réel) et traductions
         run: npm test
+        env:
+          CLAMD_TEST: "1"
       - name: Bases des tests navigateur
         run: PGPASSWORD=vyra psql -h 127.0.0.1 -U vyra -d vyra_test -c "CREATE DATABASE vyra_e2e"
       - run: npx playwright install --with-deps chromium

@@ -8,6 +8,7 @@ const prod = {
   MAIL_TRANSPORT: "brevo",
   BREVO_API_KEY: "cle-brevo",
   DATABASE_URL: "postgres://u:p@db/vyra",
+  FILE_SCAN: "clamd",
 } as unknown as NodeJS.ProcessEnv;
 
 describe("configuration de production", () => {
@@ -28,6 +29,8 @@ describe("configuration de production", () => {
     [{ PAYMENTS_PROVIDER: "stripe" }, /STRIPE_SECRET_KEY/],
     [{ DEV_MAILBOX: "true" }, /DEV_MAILBOX/],
     [{ STORAGE_DRIVER: "s3" }, /S3_BUCKET/],
+    [{ FILE_SCAN: "off" }, /FILE_SCAN=clamd/],
+    [{ RATE_LIMIT_STORE: "memory" }, /RATE_LIMIT_STORE/],
   ])("refuse une configuration dangereuse : %o", (override, msg) => {
     expect(() => loadConfig({ ...prod, ...override } as any)).toThrow(msg);
   });

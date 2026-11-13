@@ -11,6 +11,7 @@ import { audit } from "../lib/audit.js";
 import { SecretBox } from "../lib/secretbox.js";
 import { newTotpSecret, otpauthUri, verifyTotp } from "../lib/totp.js";
 import { zip } from "../lib/zip.js";
+import { servableStates } from "../lib/quarantine.js";
 import { sessionCookieName } from "../plugins/auth.js";
 
 const Code = z.string().trim().regex(/^\d{6}$/, { error: "Code à 6 chiffres attendu." });
@@ -199,7 +200,11 @@ export default async function accountRoutes(app: FastifyInstance) {
       [u.id],
     )).rows;
     const charts = (await db.query("SELECT brand, product, status, source, source_url, entries, created_at FROM thread_charts WHERE owner_id = $1", [u.id])).rows;
-    const files = (await db.query("SELECT id, kind, storage_key, filename, mime, size_bytes, sha256, created_at FROM files WHERE owner_id = $1 AND deleted_at IS NULL ORDER BY created_at", [u.id])).rows;
+    // Les fichiers en quarantaine (non analysés ou en erreur d'analyse) ne sont jamais servis, export compris.
+    const files = (await db.query(
+      "SELECT id, kind, storage_key, filename, mime, size_bytes, sha256, created_at FROM files WHERE owner_id = $1 AND deleted_at IS NULL AND scan_status = ANY($2) ORDER BY created_at",
+      [u.id, servableStates(app)],
+    )).rows;
 
     const entries: { name: string; data: Uint8Array | string }[] = [
       {
