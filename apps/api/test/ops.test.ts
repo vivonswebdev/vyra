@@ -2,6 +2,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
 import { migrationStatus } from "../src/db/migrations.js";
+import { readdirSync } from "node:fs";
+
+// Nombre de migrations livrées : lu dans le dossier, pour ne pas devoir modifier ce test à chaque lot.
+const MIGRATIONS = readdirSync(new URL("../src/db/migrations/", import.meta.url)).filter((f) => f.endsWith(".sql")).length;
 import { setup, teardown, type Ctx } from "./helpers.js";
 
 let ctx: Ctx;
@@ -22,7 +26,7 @@ describe("exploitation", () => {
     const r = await ctx.app.inject({ url: "/api/ready" });
     expect(r.statusCode).toBe(200);
     expect(Object.keys(r.json().checks)).toEqual(["database", "migrations", "storage", "engine", "email_outbox"]);
-    expect(r.json().checks.migrations.detail).toMatch(/5 appliquée/);
+    expect(r.json().checks.migrations.detail).toMatch(new RegExp(`${MIGRATIONS} appliquée`));
   });
 
   it("disponibilité en échec si l'antivirus est injoignable ou un e-mail est en échec définitif", async () => {
@@ -66,6 +70,7 @@ describe("exploitation", () => {
     const s = await migrationStatus(ctx.db);
     expect(s.pending).toEqual([]);
     expect(s.modified).toEqual([]);
-    expect(s.applied).toHaveLength(5);
+    expect(s.applied).toHaveLength(MIGRATIONS);
+    expect(MIGRATIONS).toBeGreaterThanOrEqual(6);
   });
 });

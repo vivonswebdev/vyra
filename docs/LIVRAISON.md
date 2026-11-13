@@ -9,7 +9,9 @@ Mis à jour le 13/11/2026. « Fait » signifie développé **et** couvert par un
 | 2 — Studio : comptes, projets, persistance, éditeur, export | Fait |
 | 3 — Consolidation, séparation du dépôt, préparation du Studio | Fait ([`AUDIT-LOT3.md`](AUDIT-LOT3.md)) |
 | 3.1 — Sécurité, validation avec de vrais services, préparation production, finitions du Studio | Fait, branche prête pour revue, **non fusionnée** ([`LOT-3.1.md`](LOT-3.1.md)) |
-| Market (catalogue, vendeurs, commandes, paiements) | **Non commencé**, volontairement |
+| Market 0 — Audit, architecture, risques, plan | Fait ([`market/LOT-0.md`](market/LOT-0.md)) |
+| Market 1 — Modèle de données, comptes, permissions | Fait, sans écran ([`market/LOT-1.md`](market/LOT-1.md)) |
+| Market 2 à 14 | Non commencés |
 
 ## Lot 3 : fonctions demandées
 
@@ -44,7 +46,8 @@ Détail dans [`LOT-3.1.md`](LOT-3.1.md) §5, en local et dans la CI GitHub.
 
 ## Encore ouvert
 
-- **Market** : rien (décision : pas avant consolidation du Studio).
+- **Market** : lots 0 et 1 faits ; lots 2 à 14 à venir ([`market/LOT-0.md`](market/LOT-0.md) §4).
+- Appareils tactiles : essais sur iPhone et iPad réels non réalisés ([`VALIDATION-PHYSIQUE.md`](VALIDATION-PHYSIQUE.md) §8).
 - Moteur : sources d'origine et script du kit XE1 introuvables ; aucun essai physique enregistré, donc aucune
   compatibilité machine annoncée.
 - Production : fournisseurs (hébergement, S3, e-mails), secrets et supervision à choisir et brancher ; antivirus

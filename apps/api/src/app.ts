@@ -22,6 +22,7 @@ import accountRoutes from "./routes/account.js";
 import chartRoutes from "./routes/charts.js";
 import devRoutes from "./routes/dev.js";
 import opsRoutes from "./routes/ops.js";
+import marketRoutes from "./routes/market.js";
 import { EnginePool } from "./engine/pool.js";
 
 declare module "fastify" {
@@ -150,6 +151,7 @@ export async function buildApp({ cfg, db, storage, scanner }: AppDeps): Promise<
   await app.register(accountRoutes);
   await app.register(chartRoutes);
   await app.register(projectRoutes);
+  await app.register(marketRoutes);
   if (!cfg.isProd && cfg.DEV_MAILBOX) await app.register(devRoutes);
 
   // Les liens des e-mails pointent vers /account/… : redirection vers l'écran du Studio.

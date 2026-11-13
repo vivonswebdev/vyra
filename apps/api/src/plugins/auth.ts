@@ -20,6 +20,8 @@ export interface SessionUser {
   locale: "fr" | "nl" | "en" | "ar";
   theme: "auto" | "light" | "dark";
   roles: string[];
+  /** Double authentification active (exigée pour la vente et le back-office). */
+  mfaEnabled: boolean;
   preferences: Record<string, unknown>;
   createdAt: string;
 }
@@ -40,6 +42,7 @@ declare module "fastify" {
 }
 
 export const USER_COLUMNS = `u.id, u.email, u.display_name, u.email_verified_at, u.locale, u.theme, u.preferences, u.created_at,
+  (u.totp_enabled_at IS NOT NULL) AS mfa_enabled,
   COALESCE((SELECT array_agg(role ORDER BY role) FROM user_roles r WHERE r.user_id = u.id), '{}') AS roles`;
 
 export function toSessionUser(r: Record<string, any>): SessionUser {
@@ -51,6 +54,7 @@ export function toSessionUser(r: Record<string, any>): SessionUser {
     locale: r.locale,
     theme: r.theme,
     roles: r.roles ?? [],
+    mfaEnabled: !!r.mfa_enabled,
     preferences: r.preferences ?? {},
     createdAt: new Date(r.created_at).toISOString(),
   };

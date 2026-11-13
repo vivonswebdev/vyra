@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "../../../packages/ui/src/api.js";
 import { API_ERRORS, apiDetailText, apiErrorText } from "../../../packages/ui/src/api-errors.js";
 import { COMMON, type Lang } from "../../../packages/ui/src/i18n.js";
+import { DENY_REASONS } from "../../../packages/shared/src/permissions.js";
 
 const API_SRC = path.resolve(__dirname, "../../api/src");
 function sources(dir: string): string[] {
@@ -24,7 +25,10 @@ function emittedKeys(): Set<string> {
     for (const m of s.matchAll(/code: "([a-z_]+)"/g)) keys.add(m[1]);
     for (const m of s.matchAll(/reason: "([a-z_]+)"/g)) keys.add(m[1]);
     for (const m of s.matchAll(/, "(chart_[a-z_]+)"\]/g)) keys.add(m[1]);
+    for (const m of s.matchAll(/undefined, "([a-z_]+)"\)/g)) keys.add(m[1]); // new HttpError(…, details, raison)
   }
+  // Refus de la matrice de permissions (raison calculée)
+  DENY_REASONS.forEach((r) => keys.add(r));
   // Valeurs par défaut des aides de lib/errors.ts
   ["unauthorized", "forbidden", "not_found", "bad_request", "conflict"].forEach((k) => keys.add(k));
   keys.delete("bad_request"); // catégorie toujours précisée par une raison (premier argument obligatoire)

@@ -203,6 +203,8 @@ export default async function accountRoutes(app: FastifyInstance) {
       [u.id],
     )).rows;
     const charts = (await db.query("SELECT brand, product, status, source, source_url, entries, created_at FROM thread_charts WHERE owner_id = $1", [u.id])).rows;
+    const seller = (await db.query("SELECT slug, display_name, kind, is_business, country, languages, bio, status, status_reason, created_at, updated_at FROM seller_profiles WHERE user_id = $1", [u.id])).rows[0] ?? null;
+    const sellerEvents = seller ? (await db.query("SELECT from_status, to_status, reason, created_at FROM seller_status_events WHERE user_id = $1 ORDER BY id", [u.id])).rows : [];
     // Les fichiers en quarantaine (non analysés ou en erreur d'analyse) ne sont jamais servis, export compris.
     const files = (await db.query(
       "SELECT id, kind, storage_key, filename, mime, size_bytes, sha256, created_at FROM files WHERE owner_id = $1 AND deleted_at IS NULL AND scan_status = ANY($2) ORDER BY created_at",
@@ -217,6 +219,7 @@ export default async function accountRoutes(app: FastifyInstance) {
           "compte.json : profil, préférences, appareils connectés, journal de vos actions.\n" +
           "projets/ : chaque projet avec son document de broderie et son historique de versions.\n" +
           "nuanciers.json : nuanciers de fils importés.\n" +
+          "profil-professionnel.json : profil vendeur et historique de sa vérification (s'il existe).\n" +
           "fichiers/ : images sources et fichiers exportés (PES, DST).\n\n" +
           `Généré le ${new Date().toISOString()}.\n`,
       },
@@ -225,6 +228,7 @@ export default async function accountRoutes(app: FastifyInstance) {
         data: JSON.stringify({ utilisateur: { ...user, roles: u.roles, doubleAuthentification: !!user.totp_enabled_at, totp_enabled_at: undefined }, sessions, journal: auditRows }, null, 2),
       },
       { name: "nuanciers.json", data: JSON.stringify(charts, null, 2) },
+      ...(seller ? [{ name: "profil-professionnel.json", data: JSON.stringify({ profil: seller, historique: sellerEvents }, null, 2) }] : []),
     ];
     for (const p of projects) {
       const safe = p.name.replace(/[^\p{L}\p{N} ._-]+/gu, "_").slice(0, 60);
