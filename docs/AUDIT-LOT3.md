@@ -19,7 +19,7 @@ Vérifications faites sur le code, pas sur le rapport précédent (12/11/2026).
 
 ## 2. Constats et suite donnée
 
-| # | Constat | Gravité | Statut lot 3 |
+| # | Constat | Gravité | Statut (lot 3, puis lot 3.1) |
 |---|---|---|---|
 | 1 | Le moteur s'exécutait dans le fil principal de l'API : un document piégé (densité nulle, millions de points) pouvait bloquer le serveur | Haute | **Corrigé** : pool de workers, délai, mémoire, file bornée ; validation stricte des documents |
 | 2 | Boîte aux lettres de développement active dès que `NODE_ENV` ≠ production (expose les liens de réinitialisation) | Haute | **Corrigé** : option `DEV_MAILBOX` explicite, refusée en production |
@@ -30,11 +30,13 @@ Vérifications faites sur le code, pas sur le rapport précédent (12/11/2026).
 | 7 | La réinitialisation par e-mail aurait contourné la 2FA (défaut trouvé pendant le lot) | Haute | **Corrigé** avant livraison, testé |
 | 8 | Cookie de session sans préfixe `__Host-` en HTTPS | Faible | **Corrigé** |
 | 9 | Pas de clé de chiffrement des secrets | Moyenne | **Fait** : `SECRET_KEY` obligatoire en production |
-| 10 | Le verrouillage après 8 échecs répond « trop de tentatives » : il révèle qu'un compte existe | Faible | **Ouvert** (compromis accepté, à revoir) |
-| 11 | Limitation de débit en mémoire (une seule instance) | Moyenne | **Ouvert** (Redis à prévoir pour plusieurs instances) |
-| 12 | API exécutée avec `tsx` en production | Faible | **Ouvert** |
-| 13 | Pas de supervision ni d'alertes | Moyenne | **Ouvert** |
+| 10 | Le verrouillage après 8 échecs répond « trop de tentatives » : il révèle qu'un compte existe | Faible | **Corrigé au lot 3.1** : réponses uniformes, verrouillage aussi pour les adresses inconnues |
+| 11 | Limitation de débit en mémoire (une seule instance) | Moyenne | **Corrigé au lot 3.1** : compteurs partagés dans PostgreSQL, testés avec deux instances |
+| 12 | API exécutée avec `tsx` en production | Faible | **Corrigé au lot 3.1** : API compilée, archive vérifiée sans `tsx` |
+| 13 | Pas de supervision ni d'alertes | Moyenne | **Préparé au lot 3.1** : `/api/ready`, `/api/metrics`, règles d'alerte ; **non branché** |
 | 14 | `ubuntu-latest` (26.04) n'a plus le client PostgreSQL 16 : CI en échec au run 3 | Moyenne | **Corrigé** : runner épinglé sur 24.04 |
+| 15 | Fichiers déposés sans analyse antivirus | Moyenne | **Corrigé au lot 3.1** : quarantaine + ClamAV ([`ANTIVIRUS.md`](ANTIVIRUS.md)) |
+| 16 | Messages d'erreur de l'API en français seulement | Faible | **Corrigé au lot 3.1** : FR, NL, EN, AR |
 
 ## 3. Séparation, moteur, références
 

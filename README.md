@@ -6,6 +6,7 @@ Plateforme de broderie machine : **VYRA Studio** (création et édition de motif
 (place de marché, non commencée). Documents :
 
 - [`docs/LIVRAISON.md`](docs/LIVRAISON.md) — état réel des lots et fonctions restantes
+- [`docs/LOT-3.1.md`](docs/LOT-3.1.md) — rapport du lot 3.1 : corrections, tests avec de vrais services, points à valider
 - [`docs/AUDIT.md`](docs/AUDIT.md), [`docs/AUDIT-LOT3.md`](docs/AUDIT-LOT3.md) — audits et constats
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — décisions d'architecture
 - [`docs/REFERENCES.md`](docs/REFERENCES.md) — les 45 fichiers de référence v0.2.0 et leur statut
