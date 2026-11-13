@@ -20,6 +20,9 @@ const Env = z.object({
   S3_ACCESS_KEY_ID: z.string().optional(),
   S3_SECRET_ACCESS_KEY: z.string().optional(),
   S3_SSE: z.enum(["none", "AES256"]).default("none"),
+  /** Téléchargements par URL temporaire signée (S3 uniquement), après contrôle d'accès par l'API. */
+  S3_PRESIGNED_DOWNLOADS: z.stringbool().default(false),
+  S3_PRESIGN_TTL_SECONDS: z.coerce.number().int().min(5).max(900).default(60),
   MAIL_TRANSPORT: z.enum(["outbox", "brevo"]).default("outbox"),
   MAIL_FROM: z.string().default("VYRA <no-reply@vyra.invalid>"),
   BREVO_API_KEY: z.string().optional(),

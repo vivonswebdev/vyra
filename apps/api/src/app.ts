@@ -66,7 +66,8 @@ export async function buildApp({ cfg, db, storage, scanner }: AppDeps): Promise<
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", "data:", "blob:"],
         fontSrc: ["'self'", "data:"],
-        connectSrc: ["'self'"],
+        // Avec les URL S3 temporaires, le navigateur suit la redirection vers le fournisseur.
+        connectSrc: ["'self'", ...(cfg.S3_PRESIGNED_DOWNLOADS && cfg.S3_ENDPOINT ? [new URL(cfg.S3_ENDPOINT).origin] : [])],
         frameAncestors: ["'none'"],
         objectSrc: ["'none'"],
         baseUri: ["'none'"],

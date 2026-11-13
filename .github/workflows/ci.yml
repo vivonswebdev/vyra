@@ -40,10 +40,20 @@ jobs:
       - run: npm run typecheck
       - name: Gel du moteur et empreintes de référence v0.2.0
         run: npx vitest run --project engine
-      - name: Tests unitaires, API (PostgreSQL), antivirus (ClamAV réel) et traductions
+      - name: Serveur S3 réel (MinIO) pour les tests de stockage
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/minio" https://dl.min.io/server/minio/release/linux-amd64/minio
+          chmod +x "$RUNNER_TEMP/minio"
+          mkdir -p "$RUNNER_TEMP/minio-data"
+          MINIO_ROOT_USER=vyra-ci-admin MINIO_ROOT_PASSWORD=vyra-ci-secret-123 nohup "$RUNNER_TEMP/minio" server "$RUNNER_TEMP/minio-data" --address 127.0.0.1:9000 > "$RUNNER_TEMP/minio.log" 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:9000/minio/health/live && break; sleep 1; done
+      - name: Tests unitaires, API (PostgreSQL), antivirus (ClamAV réel), S3 (MinIO réel) et traductions
         run: npm test
         env:
           CLAMD_TEST: "1"
+          S3_TEST_ENDPOINT: http://127.0.0.1:9000
+          S3_TEST_ACCESS_KEY: vyra-ci-admin
+          S3_TEST_SECRET_KEY: vyra-ci-secret-123
       - name: Bases des tests navigateur
         run: PGPASSWORD=vyra psql -h 127.0.0.1 -U vyra -d vyra_test -c "CREATE DATABASE vyra_e2e"
       - run: npx playwright install --with-deps chromium

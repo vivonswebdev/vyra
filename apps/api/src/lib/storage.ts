@@ -11,6 +11,8 @@ export interface Storage {
   get(key: string): Promise<Buffer>;
   delete(key: string): Promise<void>;
   exists(key: string): Promise<boolean>;
+  /** Facultatif : URL temporaire signée (stockage S3). */
+  presignGet?(key: string, opts: { expiresInSeconds: number; filename: string }): Promise<string>;
 }
 
 const SAFE_KEY = /^[a-z0-9][a-z0-9/_.-]{0,250}$/;

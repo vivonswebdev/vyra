@@ -337,7 +337,7 @@ export default async function projectRoutes(app: FastifyInstance) {
       [id, u.id],
     );
     if (!rows[0]) throw notFound("Export introuvable.");
-    return sendFile(reply, await storage.get(rows[0].storage_key), rows[0].filename, "application/octet-stream");
+    return deliver(app, reply, rows[0].storage_key, rows[0].filename, "application/octet-stream");
   });
 
   app.get("/api/files/:id", async (req, reply) => {
@@ -348,7 +348,7 @@ export default async function projectRoutes(app: FastifyInstance) {
       [id, u.id, servableStates(app)],
     );
     if (!rows[0]) throw notFound("Fichier introuvable.");
-    return sendFile(reply, await storage.get(rows[0].storage_key), rows[0].filename, rows[0].mime);
+    return deliver(app, reply, rows[0].storage_key, rows[0].filename, rows[0].mime);
   });
 }
 
@@ -369,6 +369,18 @@ function exportDTO(r: any): ExportDTO {
 
 export function cleanName(name: string): string {
   return (name || "fichier").replace(/[\\/\0\r\n"]/g, "_").slice(0, 160);
+}
+
+/**
+ * Diffusion d'un fichier dont l'accès vient d'être vérifié : par l'API, ou par une URL S3 temporaire
+ * (redirection 302, validité S3_PRESIGN_TTL_SECONDS) si l'option est activée.
+ */
+export async function deliver(app: FastifyInstance, reply: any, key: string, filename: string, mime: string) {
+  if (app.cfg.S3_PRESIGNED_DOWNLOADS && app.storage.presignGet) {
+    const url = await app.storage.presignGet(key, { expiresInSeconds: app.cfg.S3_PRESIGN_TTL_SECONDS, filename });
+    return reply.header("cache-control", "private, no-store").redirect(url, 302);
+  }
+  return sendFile(reply, await app.storage.get(key), filename, mime);
 }
 
 export function sendFile(reply: any, bytes: Buffer, filename: string, mime: string) {
