@@ -28,7 +28,7 @@ aucun paiement n'est activé. Les points marqués ✋ demandent votre accord ava
 | Élément | Constat |
 |---|---|
 | Dépôt `vivonswebdev/vyra` | `main` = `e4ffbe1` ; branche de travail `claude/sleepy-knuth-uw65mf` = `10893e5` (lot 3.1, CI verte, non fusionnée) |
-| Branche `refonte/ux-ui`, commit `c98b796`, tag `v0.2.0` sur `d3d9472…` | **Introuvables** dans `vivonswebdev/vyra` et `vivonswebdev/optiteam` (seuls dépôts VYRA accessibles) ; aucune étiquette dans `vyra` |
+| Branche `refonte/ux-ui`, commit `c98b796`, tag `v0.2.0` sur `d3d9472…` | Absents de `vivonswebdev/vyra` et `vivonswebdev/optiteam`. Ils appartiennent au dépôt source d'origine de StitchStudio / VYRA, non accessible : voir [`../ORGANISATION-STUDIO-MARKET.md`](../ORGANISATION-STUDIO-MARKET.md) |
 | Moteur figé avant travaux | `FROZEN.sha256` : 34/34 fichiers conformes ; registre des 45 empreintes : `719ef6c6…770d2` |
 
 ### 1.2 Ce qui est réutilisable tel quel
