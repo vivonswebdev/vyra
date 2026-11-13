@@ -84,3 +84,18 @@ note < 2, essais v1/v6 non comparables.
 - « Validé pour Brother XE1 » ne vaut que pour **ce fichier**, **ce format** et **ces conditions**.
 - Aucune mention « compatible » dans l'interface ou le Marketplace sans statut validé correspondant.
 - Un résultat négatif s'enregistre (« Testé avec anomalie ») : il ne se supprime pas.
+
+## 8. Contrôle matériel des appareils tactiles (restant à réaliser)
+
+Les gestes du Studio (pincement avec zoom centré sur les doigts, déplacement à deux doigts, annulation d'un
+geste en cours quand un second doigt se pose, poignées d'échelle et de rotation, boutons copier/coller) sont
+testés dans Chromium avec des événements tactiles simulés (tests navigateur « tablette » et « mobile »). Cette
+validation technique intermédiaire **ne remplace pas** un essai sur appareils réels.
+
+| Appareil | Navigateur | Statut |
+|---|---|---|
+| iPhone (modèle et version d'iOS à noter) | Safari | **Non réalisé** |
+| iPad (modèle et version d'iPadOS à noter) | Safari | **Non réalisé** |
+
+À noter pour chaque essai : appareil, version du système, date, testeur, gestes essayés, résultat, captures.
+Aucune mention de compatibilité iPhone ou iPad avant ces essais.
