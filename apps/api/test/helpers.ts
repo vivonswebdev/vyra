@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
+import pg from "pg";
 import type { FastifyInstance } from "fastify";
 import { loadConfig } from "../src/config.js";
 import { createPool, type Db } from "../src/db/pool.js";
@@ -8,18 +10,67 @@ import { migrate } from "../src/db/migrations.js";
 import { buildApp } from "../src/app.js";
 
 export const TEST_DB = process.env.DATABASE_URL_TEST ?? "postgres://vyra:vyra@127.0.0.1:5432/vyra_test";
+const ROLES_SQL = path.resolve(__dirname, "../../../scripts/db/roles.sql");
+export const SETUP_SQL = path.resolve(__dirname, "../../../scripts/db/database-setup.sql");
 
 export interface Ctx {
   app: FastifyInstance;
+  /** Connexion d'administration du test (superutilisateur) : préparation et contrôles directs. */
   db: Db;
+  /** Connexion de l'application testée : rôle vyra_app (SET ROLE), avec ses seuls droits. */
+  appDb: Db;
   storageDir: string;
 }
 
-/** Base de test remise à zéro, migrations appliquées, application construite. */
+/** Connexion directe sous un rôle de connexion VYRA : mot de passe aléatoire posé pour ce test (instance locale). */
+export async function roleUrl(role: string, url = TEST_DB): Promise<string> {
+  const pw = crypto.randomBytes(16).toString("hex");
+  const admin = new pg.Client({ connectionString: url });
+  await admin.connect();
+  try {
+    await admin.query(`ALTER ROLE ${role} PASSWORD '${pw}'`);
+  } finally {
+    await admin.end();
+  }
+  const u = new URL(url);
+  u.username = role;
+  u.password = pw;
+  return u.toString();
+}
+
+let rolesReady = false;
+/** Les sept rôles (globaux à l'instance de test) : les migrations leur accordent des droits (009). */
+export async function ensureRoles(db: Pick<Db, "query">) {
+  if (rolesReady) return;
+  await db.query(fs.readFileSync(ROLES_SQL, "utf8"));
+  rolesReady = true;
+}
+
+/**
+ * Pool de l'application sous le rôle vyra_app (lot H2) : la connexion d'administration du test prend le rôle
+ * vyra_app dès son ouverture ; l'API n'a alors que les droits de la matrice (009_core_privileges), comme en
+ * production. Aucun mot de passe de rôle n'est nécessaire.
+ */
+export function appPool(url = TEST_DB, role = "vyra_app"): Db {
+  const pool = createPool(url);
+  pool.on("connect", (c) => void c.query(`SET ROLE ${role}`));
+  return pool;
+}
+
+/** Base de test remise à zéro (schémas vyra et public), migrations appliquées, application construite. */
 export async function setup(overrides: Record<string, unknown> = {}): Promise<Ctx> {
   const db = createPool(TEST_DB);
-  await db.query("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;");
-  await migrate(db);
+  await ensureRoles(db);
+  await db.query("DROP SCHEMA IF EXISTS vyra CASCADE; DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;");
+  // Comme en production : base préparée par l'administrateur, migrations par vyra_migrator sous le rôle vyra_owner.
+  await db.query(fs.readFileSync(SETUP_SQL, "utf8"));
+  const mig = appPool(TEST_DB, "vyra_migrator");
+  try {
+    await migrate(mig, () => {}, { setRole: "vyra_owner" });
+  } finally {
+    await mig.end();
+  }
+  const appDb = appPool();
   const storageDir = fs.mkdtempSync(path.join(os.tmpdir(), "vyra-test-storage-"));
   const cfg = loadConfig({ NODE_ENV: "test" } as any, {
     DATABASE_URL: TEST_DB,
@@ -29,13 +80,14 @@ export async function setup(overrides: Record<string, unknown> = {}): Promise<Ct
     AUTH_RATE_LIMIT: 10_000,
     ...overrides,
   } as any);
-  const app = await buildApp({ cfg, db });
+  const app = await buildApp({ cfg, db: appDb });
   await app.ready();
-  return { app, db, storageDir };
+  return { app, db, appDb, storageDir };
 }
 
 export async function teardown(ctx: Ctx) {
   await ctx.app.close();
+  await ctx.appDb.end();
   await ctx.db.end();
   fs.rmSync(ctx.storageDir, { recursive: true, force: true });
 }

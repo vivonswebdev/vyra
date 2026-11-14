@@ -6,10 +6,10 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
 import { migrate, migrationStatus, MIGRATION_LOCK_KEY, MIGRATIONS_DIR } from "../src/db/migrations.js";
-import { TEST_DB } from "./helpers.js";
+import { ensureRoles, TEST_DB } from "./helpers.js";
 
 const ROOT = path.resolve(__dirname, "../../..");
 const RUNNER = path.join(ROOT, "apps/api/src/db/migrations.ts");
@@ -64,6 +64,16 @@ function copyDir(extra: Record<string, string> = {}, omit: string[] = [], rename
   return dir;
 }
 
+// Les migrations du socle accordent des droits aux rôles VYRA (009) : ils doivent exister sur l'instance de test.
+beforeAll(async () => {
+  const c = new pg.Client({ connectionString: urlFor("postgres") });
+  await c.connect();
+  try {
+    await ensureRoles(c);
+  } finally {
+    await c.end();
+  }
+});
 afterAll(async () => {
   const a = new pg.Client({ connectionString: urlFor("postgres") });
   await a.connect();

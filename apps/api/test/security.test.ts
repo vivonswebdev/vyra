@@ -16,7 +16,7 @@ const PW = "un-mot-de-passe-solide";
 const instance = (over: Record<string, unknown> = {}) =>
   buildApp({
     cfg: loadConfig({ NODE_ENV: "test" } as any, { DATABASE_URL: "unused", STORAGE_DIR: ctx.storageDir, LOG_LEVEL: "silent", PUBLIC_URL: "http://vyra.test", AUTH_RATE_LIMIT: 10_000, ...over } as any),
-    db: ctx.db,
+    db: ctx.appDb,
   });
 
 describe("limitation de débit partagée entre instances", () => {

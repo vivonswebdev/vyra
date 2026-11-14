@@ -12,7 +12,7 @@ import { S3Storage } from "../src/lib/s3storage.js";
 import { buildApp } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
 import { createPool } from "../src/db/pool.js";
-import { Client, setup, signup, teardown, TEST_DB, type Ctx } from "./helpers.js";
+import { Client, roleUrl, setup, SETUP_SQL, signup, teardown, TEST_DB, type Ctx } from "./helpers.js";
 
 const ENDPOINT = process.env.S3_TEST_ENDPOINT ?? "";
 const AK = process.env.S3_TEST_ACCESS_KEY ?? "";
@@ -82,7 +82,7 @@ describe.runIf(!!ENDPOINT)(`stockage S3 réel (${ENDPOINT || "non configuré"})`
       STORAGE_DRIVER: "s3", S3_ENDPOINT: ENDPOINT, S3_REGION: REGION, S3_BUCKET: BUCKET, S3_PREFIX: "api",
       S3_ACCESS_KEY_ID: AK, S3_SECRET_ACCESS_KEY: SK, S3_PRESIGNED_DOWNLOADS: "true", S3_PRESIGN_TTL_SECONDS: 30,
     } as any);
-    const app = await buildApp({ cfg, db: ctx.db });
+    const app = await buildApp({ cfg, db: ctx.appDb });
     const { c } = await signup(app);
     const p = (await c.post("/api/projects", { name: "s3", design: null })).json.project;
     const b = "----vyra-s3";
@@ -103,15 +103,20 @@ describe.runIf(!!ENDPOINT)(`stockage S3 réel (${ENDPOINT || "non configuré"})`
 
   it("sauvegarde puis restauration complètes avec stockage S3", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "vyra-s3-backup-"));
-    const env = { ...process.env, DATABASE_URL: TEST_DB, STORAGE_DRIVER: "s3", S3_ENDPOINT: ENDPOINT, S3_REGION: REGION, S3_BUCKET: BUCKET, S3_PREFIX: "api", S3_ACCESS_KEY_ID: AK, S3_SECRET_ACCESS_KEY: SK };
-    const out = execFileSync(process.execPath, [path.join(ROOT, "scripts/backup.mjs"), tmp], { env, encoding: "utf8" }).trim().split("\n").pop()!;
+    const env = { ...process.env, STORAGE_DRIVER: "s3", S3_ENDPOINT: ENDPOINT, S3_REGION: REGION, S3_BUCKET: BUCKET, S3_PREFIX: "api", S3_ACCESS_KEY_ID: AK, S3_SECRET_ACCESS_KEY: SK };
+    // Lot H2 : sauvegarde par vyra_backup, restauration par vyra_migrator dans une base neuve préparée.
+    const out = execFileSync(process.execPath, [path.join(ROOT, "scripts/backup.mjs"), tmp], { env: { ...env, BACKUP_DATABASE_URL: await roleUrl("vyra_backup") }, encoding: "utf8" }).trim().split("\n").pop()!;
     const admin = new pg.Client({ connectionString: TEST_DB });
     await admin.connect();
-    await admin.query("DROP DATABASE IF EXISTS vyra_restore");
+    await admin.query("DROP DATABASE IF EXISTS vyra_restore WITH (FORCE)");
     await admin.query("CREATE DATABASE vyra_restore");
     await admin.end();
     const RESTORE_DB = TEST_DB.replace(/\/[^/]+$/, "/vyra_restore");
-    execFileSync(process.execPath, [path.join(ROOT, "scripts/restore.mjs"), out], { env: { ...env, DATABASE_URL: RESTORE_DB, S3_PREFIX: "restaure" }, stdio: "pipe" });
+    const prep = new pg.Client({ connectionString: RESTORE_DB });
+    await prep.connect();
+    await prep.query(fs.readFileSync(SETUP_SQL, "utf8"));
+    await prep.end();
+    execFileSync(process.execPath, [path.join(ROOT, "scripts/restore.mjs"), out], { env: { ...env, RESTORE_DATABASE_URL: await roleUrl("vyra_migrator", RESTORE_DB), S3_PREFIX: "restaure" }, stdio: "pipe" });
     const db2 = createPool(RESTORE_DB);
     const { rows } = await db2.query("SELECT storage_key, sha256 FROM files WHERE kind = 'source_image' AND deleted_at IS NULL LIMIT 1");
     const restored = await store({ prefix: "restaure" }).get(rows[0].storage_key);

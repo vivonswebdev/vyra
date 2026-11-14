@@ -81,7 +81,7 @@ const appWith = (over: Record<string, unknown>) =>
       CLAMD_TIMEOUT_MS: 500,
       ...over,
     } as any),
-    db: ctx.db,
+    db: ctx.appDb,
   });
 
 function multipart(filename: string, bytes: Buffer, type = "image/png") {

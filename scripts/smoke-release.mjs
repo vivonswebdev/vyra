@@ -47,8 +47,8 @@ await new S3Client({ endpoint: S3.endpoint, region: "us-east-1", forcePathStyle:
 await fetch(`${MAILPIT}/api/v1/messages`, { method: "DELETE" });
 
 // 3. Rôles PostgreSQL (lot H1) : création, préparation de la base, mots de passe de test aléatoires.
-//    Puis migration par vyra_migrator (rôle propriétaire pris pendant la migration), droits de transition,
-//    et démarrage du serveur avec vyra_app, sans aucun privilège de migration.
+//    Puis migration par vyra_migrator (rôle propriétaire pris pendant la migration ; droits posés par la migration
+//    009), et démarrage du serveur avec vyra_app, sans aucun privilège de migration.
 const runSql = async (url, file) => {
   const c = new pg.Client({ connectionString: url });
   await c.connect();
@@ -84,8 +84,20 @@ execFileSync(process.execPath, ["dist/api/migrate.mjs"], {
   cwd: app, stdio: "inherit",
   env: { ...prodEnv, DATABASE_URL: APP_URL, MIGRATION_DATABASE_URL: MIGRATOR_URL, MIGRATION_SET_ROLE: "vyra_owner" },
 });
-await runSql(MIGRATOR_URL, "grants-h1.sql");
-step("migration séparée par vyra_migrator, objets possédés par vyra_owner, droits de transition appliqués");
+{
+  // Lot H2 : tables dans le schéma vyra, au propriétaire vyra_owner ; public vide ; droits posés par 009.
+  const c = new pg.Client({ connectionString: DB });
+  await c.connect();
+  const { rows } = await c.query(
+    `SELECT n.nspname AS s, pg_get_userbyid(c.relowner) AS o, count(*)::int AS n FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname IN ('vyra', 'public') AND c.relkind = 'r' GROUP BY 1, 2`,
+  );
+  const grants = (await c.query("SELECT has_table_privilege('vyra_app', 'vyra.users', 'TRUNCATE') t, has_column_privilege('vyra_app', 'vyra.users', 'email', 'UPDATE') e, has_table_privilege('vyra_market', 'vyra.users', 'SELECT') m")).rows[0];
+  await c.end();
+  if (JSON.stringify(rows) !== JSON.stringify([{ s: "vyra", o: "vyra_owner", n: 17 }])) throw new Error("schéma : " + JSON.stringify(rows));
+  if (grants.t || grants.e || grants.m) throw new Error("droits : " + JSON.stringify(grants));
+}
+step("migration séparée par vyra_migrator : 17 tables dans le schéma vyra, possédées par vyra_owner, droits de la matrice (009)");
 
 // 4. Démarrage en production avec vyra_app
 const child = spawn(process.execPath, ["dist/api/server.mjs"], {

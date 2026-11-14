@@ -6,6 +6,11 @@
 // rejoue jamais ce que le premier a appliqué. Chaque fichier est encore revérifié dans sa propre transaction.
 // Le registre est contrôlé avant toute application : empreinte de chaque migration appliquée (SHA-256 du
 // contenu) et absence de migration « orpheline » (enregistrée sans fichier, par exemple après un renommage).
+//
+// Schéma (lot H2) : le registre vit dans vyra.schema_migrations (ou public.schema_migrations sur une base
+// antérieure à 008_core_schema_vyra, qui l'y déplace). Son emplacement est résolu explicitement, avant et après
+// chaque fichier, sans dépendre du chemin de recherche. Dès que le schéma vyra existe, les migrations ne sont
+// appliquées que si vyra est le schéma courant : un nom non qualifié ne peut alors jamais créer d'objet dans public.
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -54,11 +59,32 @@ function readFiles(dir: string): { name: string; sql: string; sum: string }[] {
     });
 }
 
-async function readRegistry(q: Pick<pg.ClientBase, "query">): Promise<Map<string, string> | null> {
-  const { rows } = await q.query("SELECT to_regclass('schema_migrations') AS t");
-  if (!rows[0].t) return null;
-  const r = await q.query("SELECT name, checksum FROM schema_migrations");
+type Q = Pick<pg.ClientBase, "query">;
+
+/** Emplacement du registre : vyra (après 008), public (avant), ou null s'il n'existe pas encore. */
+async function registryName(q: Q): Promise<string | null> {
+  // Lecture du catalogue (et non to_regclass) : aucun droit sur le schéma public n'est nécessaire, l'API n'en a pas.
+  const { rows } = await q.query(
+    `SELECT bool_or(n.nspname = 'vyra') IS TRUE AS v, bool_or(n.nspname = 'public') IS TRUE AS p
+       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE c.relname = 'schema_migrations' AND c.relkind = 'r' AND n.nspname IN ('vyra', 'public')`,
+  );
+  if (rows[0].v && rows[0].p) throw new Error("Deux registres de migrations (vyra et public) : situation anormale, rien n'est appliqué.");
+  return rows[0].v ? "vyra.schema_migrations" : rows[0].p ? "public.schema_migrations" : null;
+}
+
+async function readRegistry(q: Q): Promise<Map<string, string> | null> {
+  const name = await registryName(q);
+  if (!name) return null;
+  const r = await q.query(`SELECT name, checksum FROM ${name}`);
   return new Map(r.rows.map((x: { name: string; checksum: string }) => [x.name, x.checksum]));
+}
+
+/** Refuse d'appliquer une migration si le schéma vyra existe sans être le schéma courant. */
+async function assertCurrentSchema(q: Q): Promise<void> {
+  const { rows } = await q.query("SELECT to_regnamespace('vyra') IS NOT NULL AS v, current_schema() AS cur");
+  if (rows[0].v && rows[0].cur !== "vyra")
+    throw new Error(`Chemin de recherche incorrect : schéma courant « ${rows[0].cur ?? "aucun"} » au lieu de « vyra » (search_path = vyra, public).`);
 }
 
 function compare(files: { name: string; sum: string }[], done: Map<string, string>): MigrationState {
@@ -87,9 +113,12 @@ export async function migrate(db: Db, log: (m: string) => void = () => {}, opts:
       // 2. Registre créé si besoin, sous le verrou, avec le rôle propriétaire le cas échéant.
       await client.query("BEGIN");
       if (opts.setRole) await client.query(`SET LOCAL ROLE ${quoteIdent(opts.setRole)}`);
-      await client.query(
-        "CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())",
-      );
+      if (!(await registryName(client))) {
+        const { rows } = await client.query("SELECT to_regnamespace('vyra') IS NOT NULL AS v");
+        await client.query(
+          `CREATE TABLE ${rows[0].v ? "vyra" : "public"}.schema_migrations (name text PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())`,
+        );
+      }
       // 3. Registre relu APRÈS le verrou (avec le même rôle que celui qui l'écrit), puis contrôlé.
       const registry = await readRegistry(client);
       await client.query("COMMIT");
@@ -105,13 +134,15 @@ export async function migrate(db: Db, log: (m: string) => void = () => {}, opts:
         try {
           await client.query("BEGIN");
           if (opts.setRole) await client.query(`SET LOCAL ROLE ${quoteIdent(opts.setRole)}`);
-          const again = await client.query("SELECT 1 FROM schema_migrations WHERE name = $1", [f.name]);
+          const again = await client.query(`SELECT 1 FROM ${await registryName(client)} WHERE name = $1`, [f.name]);
           if (again.rowCount) {
             await client.query("ROLLBACK");
             continue;
           }
+          await assertCurrentSchema(client);
           await client.query(f.sql);
-          await client.query("INSERT INTO schema_migrations (name, checksum) VALUES ($1, $2)", [f.name, f.sum]);
+          // Le fichier a pu déplacer le registre (008) : emplacement relu.
+          await client.query(`INSERT INTO ${await registryName(client)} (name, checksum) VALUES ($1, $2)`, [f.name, f.sum]);
           await client.query("COMMIT");
           applied.push(f.name);
           log(`migration appliquée : ${f.name}`);

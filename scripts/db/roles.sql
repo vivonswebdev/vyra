@@ -18,8 +18,11 @@ END $$;
 
 -- Propriétaire des objets : aucune connexion possible.
 ALTER ROLE vyra_owner    NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS INHERIT;
--- Migrations : connexion ; contourne RLS (reprises de données) ; peut prendre le rôle propriétaire, rien d'autre.
-ALTER ROLE vyra_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION BYPASSRLS NOINHERIT;
+-- Migrations et restauration : connexion ; peut prendre le rôle propriétaire, rien d'autre.
+-- NOBYPASSRLS (lot H2) : le migrateur travaille toujours sous SET ROLE vyra_owner ; c'est alors l'attribut du rôle
+-- courant (vyra_owner, NOBYPASSRLS) qui compte, et BYPASSRLS ne servait à rien (vérifié : sous FORCE ROW LEVEL
+-- SECURITY, un UPDATE après SET ROLE vyra_owner touche 0 ligne malgré BYPASSRLS).
+ALTER ROLE vyra_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;
 -- Application, authentification, tâches de fond, Market : connexion ; jamais de contournement de RLS ;
 -- membres d'aucun rôle, donc aucun SET ROLE possible.
 ALTER ROLE vyra_app      LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;

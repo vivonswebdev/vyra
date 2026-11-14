@@ -13,7 +13,7 @@ afterAll(async () => teardown(ctx));
 const appWith = (over: Record<string, unknown> = {}) =>
   buildApp({
     cfg: loadConfig({ NODE_ENV: "test" } as any, { DATABASE_URL: "unused", STORAGE_DIR: ctx.storageDir, LOG_LEVEL: "silent", PUBLIC_URL: "http://vyra.test", ...over } as any),
-    db: ctx.db,
+    db: ctx.appDb,
   });
 
 describe("exploitation", () => {
@@ -22,7 +22,7 @@ describe("exploitation", () => {
     const r = await ctx.app.inject({ url: "/api/ready" });
     expect(r.statusCode).toBe(200);
     expect(Object.keys(r.json().checks)).toEqual(["database", "migrations", "storage", "engine", "email_outbox"]);
-    expect(r.json().checks.migrations.detail).toMatch(/5 appliquée/);
+    expect(r.json().checks.migrations.detail).toMatch(/8 appliquée/);
   });
 
   it("disponibilité en échec si l'antivirus est injoignable ou un e-mail est en échec définitif", async () => {
@@ -63,9 +63,9 @@ describe("exploitation", () => {
   });
 
   it("état des migrations : tout appliqué, rien de modifié", async () => {
-    const s = await migrationStatus(ctx.db);
+    const s = await migrationStatus(ctx.appDb);
     expect(s.pending).toEqual([]);
     expect(s.modified).toEqual([]);
-    expect(s.applied).toHaveLength(5);
+    expect(s.applied).toHaveLength(8);
   });
 });

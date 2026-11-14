@@ -1,25 +1,46 @@
 #!/usr/bin/env node
-// Sauvegarde complète : base PostgreSQL (pg_dump, format custom) + fichiers du stockage local,
-// avec un manifeste d'empreintes SHA-256 vérifié à la restauration.
-// Usage : DATABASE_URL=… STORAGE_DIR=… node scripts/backup.mjs <dossier-de-sortie>
-// Stockage S3 : sauvegarder le compartiment côté fournisseur (versionnage + réplication) ; ce script
-// ne sauvegarde alors que la base (STORAGE_DIR absent).
+// Sauvegarde complète (lot H2) : base PostgreSQL (pg_dump, format custom, AVEC propriétaires et droits) + fichiers
+// du stockage, avec un instantané de contrôle (propriétaires, droits, séquences, fonctions, contraintes, politiques,
+// lignes et sommes de contrôle par table) et un manifeste d'empreintes SHA-256 vérifiés à la restauration.
+//
+// Usage : BACKUP_DATABASE_URL=<rôle vyra_backup> [STORAGE_DIR=… | STORAGE_DRIVER=s3 …] node scripts/backup.mjs <dossier>
+// Rôle : vyra_backup uniquement (lecture de tout, aucune écriture, contournement de RLS indispensable à pg_dump).
+// Cohérence : l'instantané de contrôle et pg_dump lisent le MÊME instantané de la base (pg_export_snapshot) ; le
+// stockage est copié après la base (un objet sans ligne est inoffensif ; l'inverse serait un fichier perdu).
+// Stockage S3 : chaque objet du préfixe est copié dans l'archive (versionnage du fournisseur recommandé en plus).
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import pg from "pg";
+import { snapshot } from "./db-control.mjs";
 
-const url = process.env.DATABASE_URL;
+const url = process.env.BACKUP_DATABASE_URL;
 const storage = process.env.STORAGE_DIR;
 const out = process.argv[2];
 if (!url || !out) {
-  console.error("Usage : DATABASE_URL=… [STORAGE_DIR=…] node scripts/backup.mjs <dossier>");
+  console.error("Usage : BACKUP_DATABASE_URL=<vyra_backup> [STORAGE_DIR=…] node scripts/backup.mjs <dossier>");
+  process.exit(2);
+}
+const db = new pg.Client({ connectionString: url });
+await db.connect();
+const who = (await db.query("SELECT current_user AS u")).rows[0].u;
+if (who !== "vyra_backup") {
+  console.error(`Sauvegarde refusée : rôle « ${who} ». Seul vyra_backup sauvegarde (lecture seule, propriétaires et droits conservés).`);
+  await db.end();
   process.exit(2);
 }
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 const dir = path.resolve(out, `vyra-${stamp}`);
 fs.mkdirSync(dir, { recursive: true });
-execFileSync("pg_dump", ["--format=custom", "--no-owner", "--no-privileges", "--file", path.join(dir, "base.dump"), url], { stdio: "inherit" });
+// Un instantané exporté : contrôle et pg_dump voient exactement les mêmes données.
+await db.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+const snap = (await db.query("SELECT pg_export_snapshot() AS s")).rows[0].s;
+const control = await snapshot(async (text, params) => (await db.query(text, params)).rows);
+execFileSync("pg_dump", ["--format=custom", "--snapshot", snap, "--file", path.join(dir, "base.dump"), url], { stdio: "inherit" });
+await db.query("COMMIT");
+await db.end();
+fs.writeFileSync(path.join(dir, "controle.json"), JSON.stringify(control, null, 1));
 if (process.env.STORAGE_DRIVER === "s3") {
   // Stockage S3 : chaque objet du préfixe est copié, puis archivé avec la base.
   const { s3Client, s3Prefix } = await import("./s3-env.mjs");

@@ -56,7 +56,7 @@ describe("pool de calcul du moteur", () => {
 
   it("par l'API : un export trop long répond 503 sans bloquer les autres requêtes", async () => {
     const cfg = loadConfig({ NODE_ENV: "test" } as any, { DATABASE_URL: "unused", STORAGE_DIR: ctx.storageDir, LOG_LEVEL: "silent", PUBLIC_URL: "http://vyra.test", AUTH_RATE_LIMIT: 10_000, ENGINE_TIMEOUT_MS: 1 } as any);
-    const app = await buildApp({ cfg, db: ctx.db });
+    const app = await buildApp({ cfg, db: ctx.appDb });
     const { c } = await signup(app);
     const p = (await c.post("/api/projects", { name: "Lent", design: fleur })).json.project;
     const [r, health] = await Promise.all([c.post(`/api/projects/${p.id}/exports`, { format: "pes" }), c.get("/api/health")]);
@@ -197,7 +197,7 @@ describe("intégrité des exports", () => {
 describe("erreurs serveur", () => {
   it("une erreur interne ne divulgue ni pile, ni requête SQL, ni chemin", async () => {
     const cfg = loadConfig({ NODE_ENV: "test" } as any, { DATABASE_URL: "unused", STORAGE_DIR: ctx.storageDir, LOG_LEVEL: "silent", PUBLIC_URL: "http://vyra.test" } as any);
-    const app = await buildApp({ cfg, db: ctx.db });
+    const app = await buildApp({ cfg, db: ctx.appDb });
     app.get("/api/test-boom", async () => {
       await ctx.db.query("SELECT * FROM table_inexistante");
     });

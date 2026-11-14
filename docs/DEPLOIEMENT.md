@@ -68,8 +68,9 @@ psql "$ADMIN_URL/vyra" -f scripts/db/database-setup.sql
 | `vyra_owner` | possède les objets ; aucune connexion |
 | `vyra_migrator` | commande de migration seulement ; prend `vyra_owner` le temps de chaque migration |
 | `vyra_app` | serveur (aujourd'hui seul rôle d'exécution utilisé) |
-| `vyra_system`, `vyra_worker`, `vyra_market` | préparés ; utilisés à partir du lot H3 |
-| `vyra_backup` | sauvegarde, lecture seule |
+| `vyra_system`, `vyra_worker` | droits cibles posés (009) ; utilisés à partir du lot H3 |
+| `vyra_market` | aucun droit sur les tables du socle |
+| `vyra_backup` | sauvegarde, lecture seule (seul rôle qui contourne RLS) |
 
 **Le serveur ne migre plus au démarrage.** Il vérifie que la base est à jour (sinon il refuse de démarrer) et, en
 production, refuse un rôle superutilisateur, propriétaire, capable de créer des objets ou de prendre `vyra_owner`.
@@ -78,30 +79,55 @@ production, refuse un rôle superutilisateur, propriétaire, capable de créer d
 node dist/api/migrate.mjs --status   # code 0 à jour, 1 en attente, 2 anomalie (modifiée ou orpheline)
 ```
 
+**Schéma dédié `vyra` (lot H2).** Toutes les tables vivent dans le schéma `vyra`, propriété de `vyra_owner`.
+`database-setup.sql` crée ce schéma et règle le chemin de recherche `vyra, public` de chaque rôle dans la base ;
+l'API l'impose aussi à chaque connexion. Les droits des rôles sont posés par la migration
+`009_core_privileges` (matrice par table et par colonne) : il n'y a plus de script de droits à réappliquer.
+Jusqu'au lot H3, `vyra_app` porte aussi, à titre transitoire, les droits de `vyra_system` et `vyra_worker`
+(l'API n'a encore qu'un pool).
+
 Procédure de mise à jour :
 
-1. `node scripts/backup.mjs <dossier>` (base + stockage, manifeste d'empreintes) — voir la limite ci-dessous ;
-2. `MIGRATION_DATABASE_URL=… MIGRATION_SET_ROLE=vyra_owner node dist/api/migrate.mjs` : un seul processus
-   applique ; un second attend le verrou puis ne rejoue rien ;
-3. `psql "$MIGRATION_DATABASE_URL" -f scripts/db/grants-h1.sql` (droits de transition, à réappliquer après chaque
-   migration), puis `migrate.mjs --status` = 0 ;
+1. sauvegarde (voir ci-dessous) **et restauration d'essai** de cette sauvegarde dans une base jetable ;
+2. administrateur : `roles.sql`, puis `database-setup.sql` sur la base (idempotents) ;
+3. `MIGRATION_DATABASE_URL=… MIGRATION_SET_ROLE=vyra_owner node dist/api/migrate.mjs` : un seul processus
+   applique ; un second attend le verrou puis ne rejoue rien ; `migrate.mjs --status` = 0 ensuite ;
 4. redémarrer l'application (`DATABASE_URL` = `vyra_app`) et vérifier `/api/ready`.
 
-**Limite connue (à corriger au lot H2)** : `scripts/backup.mjs` et `scripts/restore.mjs` utilisent
-`--no-owner --no-privileges`. Une restauration perd le propriétaire `vyra_owner` et tous les droits de `vyra_app`.
-Procédure vérifiée en test (`apps/api/test/db-roles.test.ts`) : `pg_dump` sans ces options par `vyra_backup`,
-`pg_restore --role=vyra_owner` par `vyra_migrator` dans une base préparée.
+Passage d'une base du lot H1 (tables dans `public`) : mêmes étapes. `008_core_schema_vyra` déplace les 16 tables et
+le registre (catalogue seulement, aucune copie ; verrou bref, `lock_timeout` 10 s) ; une table présente dans les
+deux schémas annule la migration. Prévoir une courte fenêtre de maintenance.
 
-Les migrations ne se défont pas (pas de « down ») : **retour arrière = arrêter la nouvelle version, restaurer la
-sauvegarde de l'étape 1** (`node scripts/restore.mjs <sauvegarde> --remplacer`), redémarrer l'archive précédente.
-Les données écrites entre la mise à jour et le retour arrière sont perdues : prévoir une fenêtre de maintenance.
+**Retour arrière.** Les migrations ne se défont pas (pas de « down ») ; la voie normale est le retour en avant
+(nouvelle migration corrective). Revenir au code du lot H1 après 007-009 est impossible tel quel (le serveur H1
+verrait des migrations orphelines et refuserait de démarrer). Deux possibilités, API arrêtée :
+- `psql "<url vyra_migrator>" -v ON_ERROR_STOP=1 --single-transaction -f scripts/db/rollback-h2.sql` : tables et
+  registre remis dans `public`, droits du lot H1 rétablis, lignes 007-009 retirées du registre, schéma `vyra`
+  (vide) supprimé ; **aucune perte de données** (aller-retour vérifié en test : `db-roles.test.ts`) ;
+- ou restauration de la sauvegarde de l'étape 1 dans une base neuve (les écritures postérieures sont perdues).
 
 ## Sauvegardes
 
-`scripts/backup.mjs` et `scripts/restore.mjs` gèrent la base et le stockage (dossier local ou S3, testés contre
-MinIO). `pg_dump` / `pg_restore` doivent avoir la même version majeure que le serveur (16). Planifier une
-sauvegarde quotidienne hors du serveur, activer le versionnage S3 chez le fournisseur, **tester une restauration**
-à chaque version.
+```bash
+BACKUP_DATABASE_URL=<url vyra_backup> [STORAGE_DIR=… | STORAGE_DRIVER=s3 …] node scripts/backup.mjs <dossier>
+RESTORE_DATABASE_URL=<url vyra_migrator, base NEUVE préparée> [STORAGE_DIR=…] node scripts/restore.mjs <sauvegarde> [--remplacer]
+```
+
+- **Sauvegarde** par `vyra_backup` seulement (tout autre rôle est refusé) : `pg_dump` **avec** propriétaires et
+  droits, plus un instantané de contrôle (`controle.json` : propriétaires, droits par table et par colonne,
+  séquences, fonctions, contraintes, index, politiques, nombre de lignes et somme de contrôle par table), pris
+  dans le **même instantané** de la base que `pg_dump`. Le stockage est copié ensuite. Manifeste SHA-256.
+- **Restauration** par `vyra_migrator` seulement, **uniquement dans une base neuve** préparée par l'administrateur
+  (`CREATE DATABASE`, `database-setup.sql`). Une base qui contient le moindre objet, dans n'importe quel schéma, est
+  refusée sans aucune écriture ; `--remplacer` ne concerne plus que le stockage (dossier ou préfixe S3 non vide).
+  Le stockage cible est vérifié avant la base. `pg_restore --single-transaction --role=vyra_owner` : tout ou rien.
+- **Contrôle** après restauration : l'instantané de la sauvegarde est comparé à la base restaurée ; toute différence
+  donne le code 5 et la consigne de ne pas basculer l'API. Bascule ensuite (changement de `DATABASE_URL`) :
+  l'ancienne base reste intacte jusque-là.
+- Les rôles ne sont pas dans la sauvegarde : ils viennent de `roles.sql` (mots de passe posés par l'exploitant).
+- `pg_dump` / `pg_restore` doivent avoir la même version majeure que le serveur (16). Planifier une sauvegarde
+  quotidienne hors du serveur, activer le versionnage S3 chez le fournisseur, **tester une restauration** à chaque
+  version. Une sauvegarde antérieure au lot H2 (sans `controle.json`) est refusée par ce script.
 
 ## Services externes requis
 
