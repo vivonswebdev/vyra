@@ -1,5 +1,5 @@
 // Serveur des tests navigateur : base vyra_e2e remise à zéro, applications compilées servies par l'API.
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +10,8 @@ const db = new pg.Client({ connectionString: url });
 await db.connect();
 await db.query("DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;");
 await db.end();
+// Lot H1 : le serveur ne migre plus ; la commande de migration est lancée avant lui, comme en production.
+execFileSync(process.execPath, ["dist/api/migrate.mjs"], { stdio: "inherit", env: { ...process.env, NODE_ENV: "test", DATABASE_URL: url } });
 const storage = fs.mkdtempSync(path.join(os.tmpdir(), "vyra-e2e-"));
 // Le serveur testé est la version compilée pour la production (npm run build).
 const child = spawn(process.execPath, ["dist/api/server.mjs"], {

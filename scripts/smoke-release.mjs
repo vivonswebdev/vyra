@@ -46,17 +46,52 @@ const bucket = "vyra-smoke-" + crypto.randomBytes(3).toString("hex");
 await new S3Client({ endpoint: S3.endpoint, region: "us-east-1", forcePathStyle: true, credentials: { accessKeyId: S3.ak, secretAccessKey: S3.sk } }).send(new CreateBucketCommand({ Bucket: bucket }));
 await fetch(`${MAILPIT}/api/v1/messages`, { method: "DELETE" });
 
-// 3. Démarrage en production
+// 3. Rôles PostgreSQL (lot H1) : création, préparation de la base, mots de passe de test aléatoires.
+//    Puis migration par vyra_migrator (rôle propriétaire pris pendant la migration), droits de transition,
+//    et démarrage du serveur avec vyra_app, sans aucun privilège de migration.
+const runSql = async (url, file) => {
+  const c = new pg.Client({ connectionString: url });
+  await c.connect();
+  try {
+    await c.query(fs.readFileSync(path.join(app, "scripts/db", file), "utf8"));
+  } finally {
+    await c.end();
+  }
+};
+await runSql(DB.replace(/\/[^/]+$/, "/postgres"), "roles.sql");
+await runSql(DB, "database-setup.sql");
+const pw = { migrator: crypto.randomBytes(18).toString("hex"), app: crypto.randomBytes(18).toString("hex") };
+{
+  const c = new pg.Client({ connectionString: DB });
+  await c.connect();
+  await c.query(`ALTER ROLE vyra_migrator PASSWORD '${pw.migrator}'`);
+  await c.query(`ALTER ROLE vyra_app PASSWORD '${pw.app}'`);
+  await c.end();
+}
+const asRole = (role, password) => DB.replace(/^postgres(ql)?:\/\/[^@]+@/, `postgres://${role}:${password}@`);
+const MIGRATOR_URL = asRole("vyra_migrator", pw.migrator);
+const APP_URL = asRole("vyra_app", pw.app);
 const metricsToken = crypto.randomBytes(24).toString("hex");
+const prodEnv = {
+  PATH: process.env.PATH, NODE_ENV: "production", HOST: "127.0.0.1", PORT: String(PORT), PUBLIC_URL: "https://studio.vyra.example",
+  SECRET_KEY: crypto.randomBytes(32).toString("base64"), WEB_DIST_DIR: path.join(app, "dist/web"),
+  MAIL_TRANSPORT: "smtp", SMTP_URL: SMTP, MAIL_FROM: "VYRA <no-reply@vyra.example>",
+  FILE_SCAN: "clamd", CLAMD_PORT: env("CLAMD_TEST_PORT", "3310"),
+  STORAGE_DRIVER: "s3", S3_ENDPOINT: S3.endpoint, S3_REGION: "us-east-1", S3_BUCKET: bucket, S3_ACCESS_KEY_ID: S3.ak, S3_SECRET_ACCESS_KEY: S3.sk,
+  METRICS_TOKEN: metricsToken, LOG_LEVEL: "warn",
+};
+execFileSync(process.execPath, ["dist/api/migrate.mjs"], {
+  cwd: app, stdio: "inherit",
+  env: { ...prodEnv, DATABASE_URL: APP_URL, MIGRATION_DATABASE_URL: MIGRATOR_URL, MIGRATION_SET_ROLE: "vyra_owner" },
+});
+await runSql(MIGRATOR_URL, "grants-h1.sql");
+step("migration séparée par vyra_migrator, objets possédés par vyra_owner, droits de transition appliqués");
+
+// 4. Démarrage en production avec vyra_app
 const child = spawn(process.execPath, ["dist/api/server.mjs"], {
   cwd: app,
   env: {
-    PATH: process.env.PATH, NODE_ENV: "production", HOST: "127.0.0.1", PORT: String(PORT), PUBLIC_URL: "https://studio.vyra.example",
-    SECRET_KEY: crypto.randomBytes(32).toString("base64"), DATABASE_URL: DB, WEB_DIST_DIR: path.join(app, "dist/web"),
-    MAIL_TRANSPORT: "smtp", SMTP_URL: SMTP, MAIL_FROM: "VYRA <no-reply@vyra.example>",
-    FILE_SCAN: "clamd", CLAMD_PORT: env("CLAMD_TEST_PORT", "3310"),
-    STORAGE_DRIVER: "s3", S3_ENDPOINT: S3.endpoint, S3_REGION: "us-east-1", S3_BUCKET: bucket, S3_ACCESS_KEY_ID: S3.ak, S3_SECRET_ACCESS_KEY: S3.sk,
-    METRICS_TOKEN: metricsToken, LOG_LEVEL: "warn",
+    ...prodEnv, DATABASE_URL: APP_URL,
   },
   stdio: ["ignore", "inherit", "inherit"],
 });
@@ -68,9 +103,9 @@ try {
   }
   const ready = await (await fetch(`${BASE}/api/ready`)).json();
   if (!ready.ok) throw new Error("ready : " + JSON.stringify(ready.checks));
-  step("démarrage en production : base, migrations, stockage S3, moteur, antivirus, e-mails prêts");
+  step("démarrage en production avec vyra_app (sans privilège de migration) : base, migrations, stockage S3, moteur, antivirus, e-mails prêts");
 
-  // 4. Parcours réel
+  // 5. Parcours réel
   const H = { "x-vyra-client": "web", "content-type": "application/json", origin: "https://studio.vyra.example" };
   const email = `smoke-${Date.now()}@example.com`;
   let r = await fetch(`${BASE}/api/auth/signup`, { method: "POST", headers: H, body: JSON.stringify({ email, password: "motdepasse-solide-42", displayName: "Smoke", acceptTerms: true }) });

@@ -1,13 +1,38 @@
 import { loadConfig } from "./config.js";
 import { createPool } from "./db/pool.js";
-import { migrate } from "./db/migrations.js";
+import { migrationStatus } from "./db/migrations.js";
+import { checkRuntimeRole } from "./db/runtime-role.js";
 import { buildApp } from "./app.js";
 import { createSender, flushOutbox } from "./lib/mailer.js";
 import { rescanUnscanned } from "./lib/quarantine.js";
 
 const cfg = loadConfig();
+// Lot H1 : le serveur ne migre plus. Les migrations sont appliquées avant le démarrage par la commande dédiée
+// (`node dist/api/migrate.mjs`, rôle vyra_migrator). Le serveur vérifie seulement que la base est à jour.
+if (cfg.isProd && process.env.MIGRATION_DATABASE_URL) {
+  console.error("MIGRATION_DATABASE_URL ne doit pas être fourni au serveur : les identifiants de migration restent réservés à la commande de migration.");
+  process.exit(1);
+}
 const db = createPool(cfg.DATABASE_URL);
-await migrate(db, (m) => console.log(m));
+const state = await migrationStatus(db);
+if (state.pending.length || state.modified.length || state.orphans.length) {
+  console.error(
+    "Base de données pas à jour : lancez d'abord `npm run db:migrate`.\n" +
+      JSON.stringify({ pending: state.pending, modified: state.modified, orphans: state.orphans }),
+  );
+  await db.end();
+  process.exit(1);
+}
+const role = await checkRuntimeRole(db);
+if (role.problems.length) {
+  const msg = `Le rôle PostgreSQL de l'API (${role.role}) a des privilèges inutiles : ${role.problems.join(", ")}.`;
+  if (cfg.isProd) {
+    console.error(msg + " Démarrage refusé en production (utiliser vyra_app).");
+    await db.end();
+    process.exit(1);
+  }
+  console.warn(msg + " Accepté hors production uniquement.");
+}
 const app = await buildApp({ cfg, db });
 rescanUnscanned(app).catch((e) => app.log.error(e));
 

@@ -21,6 +21,8 @@ fs.rmSync(stage, { recursive: true, force: true });
 fs.mkdirSync(stage, { recursive: true });
 fs.cpSync(path.join(root, "dist"), path.join(stage, "dist"), { recursive: true });
 for (const f of ["package.json", "package-lock.json", ".env.example"]) fs.copyFileSync(path.join(root, f), path.join(stage, f));
+// Scripts d'exploitation de la base (lot H1) : rôles, préparation d'une base, droits de transition.
+fs.cpSync(path.join(root, "scripts/db"), path.join(stage, "scripts/db"), { recursive: true });
 // Manifestes des espaces de travail : nécessaires à `npm ci` ; leur code est déjà compilé dans dist/.
 for (const ws of ["apps/api", "apps/studio", "packages/engine", "packages/shared", "packages/ui"]) {
   fs.mkdirSync(path.join(stage, ws), { recursive: true });

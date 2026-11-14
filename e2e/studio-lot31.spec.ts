@@ -139,5 +139,7 @@ test("erreurs de l'API affichées dans la langue choisie (arabe, néerlandais)",
   await page.locator("input[name=displayName]").fill("Atelier");
   await page.locator("input[name=acceptTerms]").check();
   await page.locator("input[name=password]").press("Enter");
-  await expect(page.getByText("Minstens 10 tekens.")).toBeVisible();
+  // Le message d'erreur du champ (role="alert"), texte exact : l'indication statique du champ contient la même
+  // phrase précédée de « · », ce qui rendait l'ancien sélecteur ambigu selon l'instant.
+  await expect(page.getByRole("alert").getByText("Minstens 10 tekens.", { exact: true })).toBeVisible();
 });

@@ -76,6 +76,8 @@ jobs:
       - name: Tests unitaires, API (PostgreSQL), antivirus (ClamAV réel), S3 (MinIO réel), SMTP (Mailpit) et traductions
         run: npm test
         env:
+          # Rôles PostgreSQL (lot H1) : créés sur l'instance de test de la CI, jamais ailleurs.
+          PG_ROLES_TEST: "1"
           CLAMD_TEST: "1"
           S3_TEST_ENDPOINT: http://127.0.0.1:9000
           S3_TEST_ACCESS_KEY: vyra-ci-admin

@@ -1,10 +1,10 @@
 // Exploitation : vivacité (/api/health), disponibilité détaillée (/api/ready), métriques Prometheus
 // (/api/metrics, protégées par jeton). Aucune donnée personnelle ni secret n'est exposé.
-import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
+import { migrationStatus } from "../db/migrations.js";
 
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), path.basename(path.dirname(fileURLToPath(import.meta.url))) === "routes" ? "../db/migrations" : "migrations");
 
@@ -37,10 +37,11 @@ export default async function opsRoutes(app: FastifyInstance) {
     };
     await run("database", async () => void (await db.query("SELECT 1")));
     await run("migrations", async () => {
-      const files = fs.existsSync(MIGRATIONS_DIR) ? fs.readdirSync(MIGRATIONS_DIR).filter((f) => /^\d{3}_.+\.sql$/.test(f)) : [];
-      const { rows } = await db.query("SELECT count(*)::int n FROM schema_migrations");
-      if (rows[0].n !== files.length) throw new Error(`${rows[0].n} appliquée(s) sur ${files.length}`);
-      return `${files.length} appliquée(s)`;
+      // Lecture seule : registre comparé aux fichiers (en attente, modifiées, orphelines).
+      const s = await migrationStatus(db, { dir: MIGRATIONS_DIR });
+      if (s.pending.length || s.modified.length || s.orphans.length)
+        throw new Error(`${s.applied.length} appliquée(s) ; en attente : ${s.pending.length}, modifiée(s) : ${s.modified.length}, orpheline(s) : ${s.orphans.length}`);
+      return `${s.applied.length} appliquée(s)`;
     });
     await run("storage", async () => {
       const key = `sante/${crypto.randomUUID()}.bin`;

@@ -9,6 +9,10 @@ const Env = z.object({
   PORT: z.coerce.number().int().default(8787),
   HOST: z.string().default("127.0.0.1"),
   DATABASE_URL: z.string().default("postgres://vyra:vyra@127.0.0.1:5432/vyra_dev"),
+  /** Migrations (lot H1) : connexion du migrateur, lue seulement par la commande de migration, jamais par le serveur. */
+  MIGRATION_DATABASE_URL: z.string().optional(),
+  /** Rôle pris pendant chaque migration (`SET LOCAL ROLE`), pour que les objets appartiennent au propriétaire. */
+  MIGRATION_SET_ROLE: z.string().regex(/^[a-z_][a-z0-9_]*$/).optional(),
   PUBLIC_URL: z.string().url().default("http://127.0.0.1:8787"),
   STORAGE_DIR: z.string().default(path.resolve(process.cwd(), "storage")),
   /** « local » (disque) ou « s3 » (stockage objet privé compatible S3). */
