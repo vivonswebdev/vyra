@@ -668,6 +668,11 @@ export function ExportPanel({ ed }: { ed: Editor }) {
       <a className="btn sm" href={`${import.meta.env.BASE_URL}p/${ed.id}/fiche`} target="_blank" rel="noopener" data-testid="open-prep">
         {t("prep.open")}
       </a>
+      <h3 style={{ marginTop: 16 }}>{t("at.title")}</h3>
+      <p className="small muted">{t("at.openHint")}</p>
+      <a className="btn sm" href={`${import.meta.env.BASE_URL}p/${ed.id}/atelier`} target="_blank" rel="noopener" data-testid="open-atelier">
+        {t("at.open")}
+      </a>
       <h3 style={{ marginTop: 16 }}>{t("ex.previews")}</h3>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button className="btn sm" disabled={!a} onClick={() => a && saveBlob(new Blob([planToSvg(a.plan, ed.name)], { type: "image/svg+xml" }), ed.name + "-apercu.svg")}>

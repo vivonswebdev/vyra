@@ -731,3 +731,334 @@
   font-size: 12.5px;
   flex-wrap: wrap;
 }
+
+/* ------------------------------------------------------------------ Atelier vêtement */
+/* Colonne d'outils à gauche ; vêtement 3D en haut, patron à plat en bas. Les deux vues gardent un fond de
+   papier quadrillé (repère en cm) dans les deux thèmes ; le reste suit les jetons du Studio. */
+.atelier {
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--bg);
+  color: var(--text);
+}
+.at-top {
+  grid-area: auto; /* la classe .ed-top place l'en-tête dans la grille de l'éditeur */
+  min-height: 52px;
+  flex-wrap: wrap;
+  padding-block: 6px;
+}
+.at-title {
+  margin: 0;
+  font: 600 16px var(--font-ui);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.at-controls,
+.at-swatches,
+.at-inks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.at-swatches,
+.at-inks {
+  gap: 5px;
+}
+.at-sw {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid rgb(0 0 0 / 0.2);
+  padding: 0;
+  cursor: pointer;
+}
+.at-sw[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--text);
+}
+.at-inks input[type="color"] {
+  width: 30px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+}
+.at-body {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px;
+  min-height: 0;
+}
+.at-side {
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow-y: auto;
+  min-height: 0;
+}
+.at-sec {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.at-sec h2,
+.at-vhead h2 {
+  margin: 0;
+  font: 600 12px var(--font-ui);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.at-sec h2 {
+  display: flex;
+  justify-content: space-between;
+}
+.at-row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.at-layers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+.at-layers li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+}
+.at-layers li.sel {
+  border-color: var(--text);
+  background: var(--surface);
+}
+.at-layer {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  padding: 6px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: start;
+  cursor: pointer;
+}
+.at-layer .nm {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.at-layer .pc {
+  font-size: 11px;
+  color: var(--muted);
+}
+.at-eye {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-inline-end: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--text);
+  cursor: pointer;
+}
+.at-eye.off {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--muted);
+}
+.at-props {
+  display: grid;
+  gap: 10px;
+}
+.at-props .segmented {
+  flex-wrap: wrap;
+}
+.at-field {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+.at-field textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: 13px var(--font-ui);
+}
+.at-fonts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+.at-fonts button {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 15px;
+  text-align: start;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.at-fonts button[aria-pressed="true"] {
+  border-color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--text);
+}
+.at-range {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr) 64px;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+.at-range input {
+  width: 100%;
+  accent-color: var(--copper);
+}
+.at-range output {
+  text-align: end;
+  color: var(--muted);
+}
+.at-note {
+  margin: 0;
+  padding: 12px;
+}
+.at-main {
+  display: grid;
+  grid-template-rows: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 10px;
+  min-height: 0;
+}
+.at-view {
+  /* Les vues gardent leur papier clair dans les deux thèmes : leurs commandes reprennent donc la palette
+     claire du Studio, quel que soit le thème choisi. */
+  --bg: #f6f1e8;
+  --surface: #f1e7d8;
+  --surface-2: #e8d9c6;
+  --raised: #fbf8f2;
+  --text: #5a3a28;
+  --muted: #6f4a30;
+  --line: #d6c4ab;
+  --accent: #5a3a28;
+  --accent-ink: #f6f1e8;
+  color-scheme: light;
+  color: var(--text);
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background-color: #eef1f5;
+  background-image: linear-gradient(rgb(60 86 135 / 0.09) 1px, transparent 1px), linear-gradient(90deg, rgb(60 86 135 / 0.09) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+.at-vhead {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+}
+.at-vhead small {
+  margin-inline-start: 6px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted);
+}
+.at-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+.at-v2 .at-canvas {
+  top: 48px;
+  height: calc(100% - 48px);
+}
+.at-cams {
+  position: absolute;
+  z-index: 2;
+  top: 58px;
+  inset-inline-end: 10px;
+  display: grid;
+  gap: 6px;
+  justify-items: end;
+}
+.at-stats,
+.at-overlay {
+  position: absolute;
+  z-index: 2;
+  margin: 0;
+}
+.at-stats {
+  inset-inline-start: 10px;
+  bottom: 8px;
+  max-width: calc(100% - 20px);
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+}
+.at-overlay {
+  top: 60px;
+  inset-inline: 10px;
+}
+@media (max-width: 900px) {
+  .atelier {
+    height: auto;
+  }
+  .at-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .at-main {
+    order: -1;
+    grid-template-rows: auto auto;
+  }
+  .at-v3 {
+    height: min(115vw, 620px);
+  }
+  .at-v2 {
+    height: min(90vw, 520px);
+  }
+  .at-side {
+    overflow: visible;
+  }
+}
+@media (max-width: 600px) {
+  .at-stats {
+    display: none;
+  }
+  .at-cams {
+    top: 100px;
+  }
+}
