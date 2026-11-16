@@ -32,6 +32,9 @@ const LOGIN = ROLES.filter((r) => r !== "vyra_owner");
 const RUNTIME = ["vyra_app", "vyra_system", "vyra_worker", "vyra_market"];
 const SOCLE = ["users", "user_roles", "sessions", "auth_tokens", "email_outbox", "files", "audit_log", "projects", "project_versions", "project_exports",
   "project_files", "user_recovery_codes", "mfa_challenges", "thread_charts", "auth_throttle", "rate_limits", "schema_migrations"].sort();
+/** Lot H6 (014) : tables techniques de la garde du dernier administrateur, créées directement dans vyra. */
+const GUARD = ["admin_guard_lock", "admin_guard_tx"];
+const VYRA = [...SOCLE, ...GUARD].sort(); // contenu de vyra après toutes les migrations du socle
 const H2_FILES = FILES.filter((f) => f > "006"); // migrations du socle postérieures à H1 (007 et suivantes)
 const pw: Record<string, string> = Object.fromEntries(LOGIN.map((r) => [r, crypto.randomBytes(16).toString("hex")]));
 const u = new URL(TEST_DB);
@@ -99,6 +102,22 @@ async function seed(db: string) {
     INSERT INTO rate_limits (key, count, reset_at) VALUES ('k', 1, now());
     SELECT nextval('audit_log_id_seq'); SELECT nextval('audit_log_id_seq');`);
 }
+/** Droits effectifs (PUBLIC et rôles VYRA) sur les schémas vyra et public, une ligne par droit (P-PRIV-1). */
+const PRIVILEGES_SQL = `WITH g AS (
+  SELECT 'schema'::text k, n.nspname::text obj, (aclexplode(coalesce(n.nspacl, acldefault('n', n.nspowner)))).* FROM pg_namespace n WHERE n.nspname IN ('vyra','public')
+  UNION ALL
+  SELECT CASE c.relkind WHEN 'S' THEN 'sequence' ELSE 'table' END, n.nspname||'.'||c.relname, (aclexplode(coalesce(c.relacl, acldefault(CASE c.relkind WHEN 'S' THEN 's' ELSE 'r' END::"char", c.relowner)))).*
+    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('vyra','public') AND c.relkind IN ('r','S','v','m')
+  UNION ALL
+  SELECT 'column', n.nspname||'.'||c.relname||'('||a.attname||')', (aclexplode(a.attacl)).*
+    FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('vyra','public') AND a.attacl IS NOT NULL
+  UNION ALL
+  SELECT 'function', n.nspname||'.'||p.proname||'('||pg_get_function_identity_arguments(p.oid)||')', (aclexplode(coalesce(p.proacl, acldefault('f', p.proowner)))).*
+    FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname IN ('vyra','public')
+)
+SELECT CASE WHEN grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(grantee) END || ' ' || privilege_type || ' ' || k || ' ' || obj || CASE WHEN is_grantable THEN ' WITH GRANT' ELSE '' END AS line
+  FROM g WHERE grantee = 0 OR pg_get_userbyid(grantee) IN ('vyra_app','vyra_system','vyra_worker','vyra_market','vyra_backup','vyra_migrator')
+ ORDER BY 1`;
 const snap = (db: string) => snapshot(async (t: string, p?: unknown[]) => rows(adminUrl(db), t, p));
 /** Contenu (lignes et sommes de contrôle par table, hors registre) et valeurs des séquences, quel que soit le schéma. */
 async function content(db: string) {
@@ -110,7 +129,8 @@ async function content(db: string) {
   const schema = (await rows(adminUrl(db), "SELECT n.nspname s FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = 'sessions' AND n.nspname IN ('vyra', 'public')"))[0].s;
   const sessions = (await rows(adminUrl(db), `SELECT count(*)::int AS rows, md5(string_agg(x, E'\\n' ORDER BY x)) AS checksum
      FROM (SELECT (token_hash, user_id, created_at, last_seen_at, expires_at, ip, user_agent, id)::text AS x FROM "${schema}".sessions) t`))[0];
-  const tables = s.tables.map(strip).filter((t: any) => t.name !== "schema_migrations" && t.name !== "sessions");
+  // Tables techniques de la garde (014) : absentes en H1, sans donnée utilisateur ; hors comparaison.
+  const tables = s.tables.map(strip).filter((t: any) => t.name !== "schema_migrations" && t.name !== "sessions" && !GUARD.includes(t.name));
   return { tables: [...tables, { name: "sessions", ...sessions }].sort(byName), sequences: s.sequences.map(strip).sort(byName) };
 }
 /** Structure (sans données) : propriétaires, droits, contraintes, index, fonctions, politiques. */
@@ -171,7 +191,7 @@ describe.runIf(ENABLED)("rôles PostgreSQL et schéma vyra (instance locale isol
   });
 
   it("base neuve : tables créées directement dans vyra, au propriétaire vyra_owner ; public vide ; registre complet", async () => {
-    expect(await tablesIn(db, "vyra")).toEqual(SOCLE);
+    expect(await tablesIn(db, "vyra")).toEqual(VYRA);
     expect(await tablesIn(db, "public")).toEqual([]);
     const owners = await rows(adminUrl(db), "SELECT DISTINCT pg_get_userbyid(relowner) o FROM pg_class WHERE relnamespace = 'vyra'::regnamespace");
     expect(owners.map((r) => r.o)).toEqual(["vyra_owner"]);
@@ -196,7 +216,7 @@ describe.runIf(ENABLED)("rôles PostgreSQL et schéma vyra (instance locale isol
     // 3. Aucune perte : mêmes lignes, mêmes sommes de contrôle, mêmes valeurs de séquences.
     expect(await content(old)).toEqual(before);
     expect(await tablesIn(old, "public")).toEqual([]);
-    expect(await tablesIn(old, "vyra")).toEqual(SOCLE);
+    expect(await tablesIn(old, "vyra")).toEqual(VYRA);
     // 4. Même structure (propriétaires, droits par table et par colonne, contraintes, index) qu'une base neuve.
     expect(compare(await structure(db), await structure(old))).toEqual([]);
     // 5. Clé corrigée par 007 : supprimer l'administrateur qui a attribué un rôle fonctionne.
@@ -215,7 +235,7 @@ describe.runIf(ENABLED)("rôles PostgreSQL et schéma vyra (instance locale isol
     await migrateAs(b);
     expect(await migrateAs(b, migDir(FILES, m006))).toEqual(["006_market_identity.sql"]);
     for (const d of [a, b]) {
-      expect(await tablesIn(d, "vyra"), d).toEqual([...SOCLE, "seller_profiles", "seller_status_events"].sort());
+      expect(await tablesIn(d, "vyra"), d).toEqual([...VYRA, "seller_profiles", "seller_status_events"].sort());
       expect(await tablesIn(d, "public"), d).toEqual([]);
       expect(await fk(d), d).toMatch(/ON DELETE SET NULL/);
     }
@@ -226,7 +246,7 @@ describe.runIf(ENABLED)("rôles PostgreSQL et schéma vyra (instance locale isol
     await sql(adminUrl(c), SQL("database-setup.sql"));
     expect(await migrateAs(c, migDir(FILES, m006))).toEqual(H2_FILES);
     expect(await tablesIn(c, "public")).toEqual(["seller_profiles", "seller_status_events"]);
-    expect(await tablesIn(c, "vyra")).toEqual(SOCLE);
+    expect(await tablesIn(c, "vyra")).toEqual(VYRA);
     expect(await fk(c)).toMatch(/ON DELETE SET NULL/);
   }, 120_000);
 
@@ -253,7 +273,7 @@ describe.runIf(ENABLED)("rôles PostgreSQL et schéma vyra (instance locale isol
     const tp = async (role: string, t: string, p: string) => (await rows(adminUrl(db), "SELECT has_table_privilege($1, $2, $3) v", [role, `vyra.${t}`, p]))[0].v;
     const anyCol = async (role: string, t: string) => (await rows(adminUrl(db), "SELECT has_any_column_privilege($1, $2, 'SELECT,INSERT,UPDATE') v", [role, `vyra.${t}`]))[0].v;
     const cp = async (role: string, t: string, c: string, p: string) => (await rows(adminUrl(db), "SELECT has_column_privilege($1, $2, $3, $4) v", [role, `vyra.${t}`, c, p]))[0].v;
-    for (const t of SOCLE) {
+    for (const t of VYRA) {
       for (const r of RUNTIME) for (const p of ["TRUNCATE", "REFERENCES", "TRIGGER"]) expect(await tp(r, t, p), `${r} ${p} ${t}`).toBe(false);
       expect(await anyCol("vyra_market", t), `market ${t}`).toBe(false);
       expect(await tp("vyra_market", t, "DELETE"), `market ${t}`).toBe(false);
@@ -287,6 +307,45 @@ describe.runIf(ENABLED)("rôles PostgreSQL et schéma vyra (instance locale isol
     await expect(sql(urlAs("vyra_backup", db), "DELETE FROM vyra.sessions")).rejects.toThrow(/permission denied/);
     for (const stmt of ["ALTER TABLE vyra.users ADD COLUMN x int", "DROP TABLE vyra.thread_charts", "TRUNCATE vyra.users", "INSERT INTO vyra.schema_migrations (name, checksum) VALUES ('999_x.sql', 'x')", "CREATE TEMP TABLE t (id int)"])
       await expect(sql(urlAs("vyra_app", db), stmt), stmt).rejects.toThrow(/permission denied|must be owner/);
+  });
+
+  it("P-PRIV-1 : droits effectifs de chaque rôle identiques à la référence relue (schémas, tables, colonnes, séquences, fonctions)", async () => {
+    const expected = fs.readFileSync(path.join(__dirname, "support/privileges.txt"), "utf8").split("\n").filter((l) => l && !l.startsWith("#"));
+    const actual = (await rows(adminUrl(db), PRIVILEGES_SQL)).map((r) => r.line);
+    expect(actual).toEqual(expected);
+  });
+
+  it("P-PRIV-2, P-PRIV-3 : aucun rôle d'exécution ne modifie la structure ; PUBLIC n'a aucun droit ; pas de rôle anon/authenticated", async () => {
+    for (const r of RUNTIME) {
+      for (const stmt of ["ALTER TABLE vyra.users ADD COLUMN x int", "DROP TABLE vyra.thread_charts", "TRUNCATE vyra.sessions", "ALTER TABLE vyra.projects DISABLE ROW LEVEL SECURITY",
+        "DROP POLICY projects_app_select ON vyra.projects", "CREATE OR REPLACE FUNCTION vyra.ctx_user() RETURNS uuid LANGUAGE sql AS 'SELECT NULL::uuid'"])
+        await expect(sql(urlAs(r, db), stmt), `${r} : ${stmt}`).rejects.toThrow(/permission denied|must be owner|does not exist/);
+      // Sans droit d'attribution, PostgreSQL accepte la commande avec un simple avertissement et n'accorde rien :
+      // le décompte des droits de PUBLIC ci-dessous le vérifie.
+      await sql(urlAs(r, db), "GRANT SELECT ON vyra.users TO PUBLIC; GRANT EXECUTE ON FUNCTION vyra.ctx_user() TO PUBLIC").catch(() => {});
+    }
+    const pub = await rows(adminUrl(db), `SELECT count(*)::int n FROM (
+        SELECT 1 FROM pg_class c, aclexplode(coalesce(c.relacl, acldefault(CASE c.relkind WHEN 'S' THEN 's' ELSE 'r' END::"char", c.relowner))) a
+         WHERE c.relnamespace IN ('vyra'::regnamespace, 'public'::regnamespace) AND a.grantee = 0
+        UNION ALL SELECT 1 FROM pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+         WHERE p.pronamespace IN ('vyra'::regnamespace, 'public'::regnamespace) AND a.grantee = 0
+        UNION ALL SELECT 1 FROM pg_namespace n, aclexplode(coalesce(n.nspacl, acldefault('n', n.nspowner))) a
+         WHERE n.nspname IN ('vyra', 'public') AND a.grantee = 0) x`);
+    expect(pub[0].n).toBe(0);
+    expect(await rows(adminUrl("postgres"), "SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role')")).toEqual([]);
+  });
+
+  it("O-REST-3 : seul vyra_backup peut sauvegarder ; pg_dump refusé à chaque rôle d'exécution et au migrateur", async () => {
+    const dump = (role: string) => {
+      try {
+        execFileSync("pg_dump", ["--data-only", "--schema=vyra", "--file=/dev/null", urlAs(role, db)], { stdio: "pipe" });
+        return "ok";
+      } catch (e: any) {
+        return String(e.stderr);
+      }
+    };
+    for (const r of [...RUNTIME, "vyra_migrator"]) expect(dump(r), r).toMatch(/permission denied|row-level security/);
+    expect(dump("vyra_backup")).toBe("ok");
   });
 
   it("contrôle du rôle d'exécution : vyra_app sans problème ; mauvais chemin de recherche, migrateur et superutilisateur signalés", async () => {

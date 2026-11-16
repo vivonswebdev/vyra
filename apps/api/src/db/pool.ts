@@ -14,23 +14,41 @@ export const SEARCH_PATH = "vyra, public";
 
 export function createPool(url: string): Db {
   const pool = new pg.Pool({ connectionString: url, max: 10, idleTimeoutMillis: 30_000, options: `-c search_path=${SEARCH_PATH.replace(" ", "")}` });
+  // Lot H6 : une connexion inactive coupée par le serveur (redémarrage, bascule, délai) émet une erreur sur le
+  // pool ; sans écouteur, Node arrêterait tout le processus. Le pool retire de lui-même la connexion fautive.
+  pool.on("error", (err) => console.error(`Connexion PostgreSQL inactive perdue : ${err.message}`));
   return pool;
 }
 
-/** Exécute fn dans une transaction ; annule en cas d'erreur. */
-export async function tx<T>(db: Db, fn: (client: Tx) => Promise<T>): Promise<T> {
+/**
+ * Transaction sur une connexion empruntée au pool : BEGIN, `prepare` (contexte éventuel), fn, COMMIT ; ROLLBACK
+ * sur toute erreur. Lot H6 : une coupure de la connexion pendant la transaction (serveur redémarré, délai
+ * idle_in_transaction dépassé, pg_terminate_backend) est captée ici au lieu d'arrêter le processus, et la
+ * connexion est détruite au lieu d'être rendue au pool (test P-LEAK-2).
+ */
+async function transaction<T>(db: Db, prepare: ((client: Tx) => Promise<void>) | null, fn: (client: Tx) => Promise<T>): Promise<T> {
   const client = await db.connect();
+  let broken: Error | undefined;
+  const onError = (err: Error) => (broken = err);
+  client.on("error", onError);
   try {
     await client.query("BEGIN");
+    if (prepare) await prepare(client);
     const r = await fn(client);
     await client.query("COMMIT");
     return r;
   } catch (e) {
-    await client.query("ROLLBACK").catch(() => {});
+    if (!broken) await client.query("ROLLBACK").catch((err) => (broken = err));
     throw e;
   } finally {
-    client.release();
+    client.removeListener("error", onError);
+    client.release(broken);
   }
+}
+
+/** Exécute fn dans une transaction ; annule en cas d'erreur. */
+export function tx<T>(db: Db, fn: (client: Tx) => Promise<T>): Promise<T> {
+  return transaction(db, null, fn);
 }
 
 /**
@@ -49,27 +67,19 @@ export interface UserContext {
   sessionHash: Buffer | null;
 }
 
-export async function withUser<T>(db: Db, ctx: UserContext, fn: (client: Tx) => Promise<T>): Promise<T> {
-  const client = await db.connect();
-  let broken: Error | undefined;
-  try {
-    await client.query("BEGIN");
-    const { rows } = await client.query(
-      `SELECT vyra.ctx_user()::text AS uid
-         FROM (SELECT set_config('vyra.user_id', $1, true) AS a, set_config('vyra.session', $2, true) AS b) AS ctx`,
-      [ctx.userId, ctx.sessionHash ? ctx.sessionHash.toString("hex") : ""],
-    );
-    if (rows[0]?.uid !== ctx.userId) throw unauthorized("session_expired", "Session expirée ou révoquée. Reconnectez-vous.");
-    const r = await fn(client);
-    await client.query("COMMIT");
-    return r;
-  } catch (e) {
-    // Une connexion dont l'annulation échoue n'est pas rendue au pool : elle est détruite.
-    await client.query("ROLLBACK").catch((err) => (broken = err));
-    throw e;
-  } finally {
-    client.release(broken);
-  }
+export function withUser<T>(db: Db, ctx: UserContext, fn: (client: Tx) => Promise<T>): Promise<T> {
+  return transaction(
+    db,
+    async (client) => {
+      const { rows } = await client.query(
+        `SELECT vyra.ctx_user()::text AS uid
+           FROM (SELECT set_config('vyra.user_id', $1, true) AS a, set_config('vyra.session', $2, true) AS b) AS ctx`,
+        [ctx.userId, ctx.sessionHash ? ctx.sessionHash.toString("hex") : ""],
+      );
+      if (rows[0]?.uid !== ctx.userId) throw unauthorized("session_expired", "Session expirée ou révoquée. Reconnectez-vous.");
+    },
+    fn,
+  );
 }
 
 /** Requêtes isolées faites pour l'utilisateur : chacune dans sa propre transaction, avec le contexte. */

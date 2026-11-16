@@ -111,7 +111,7 @@ try {
 } finally {
   await q("ROLLBACK");
 }
-const diffs = compare(expected, actual);
+const diffs = compare(expected, actual, { sequencesAtLeast: true });
 await db.end();
 if (diffs.length) {
   console.error(`Contrôle après restauration : ${diffs.length} différence(s). NE PAS basculer l'API sur cette base.`);

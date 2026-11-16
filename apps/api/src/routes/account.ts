@@ -47,8 +47,10 @@ export async function checkSecondFactor(q: Queryable, box: SecretBox, userId: st
   if (input.code) {
     const step = verifyTotp(box.open(u.totp_secret_enc), input.code, { lastStep: u.totp_last_step == null ? null : Number(u.totp_last_step) });
     if (step == null) return false;
-    await q.query("UPDATE users SET totp_last_step = $2 WHERE id = $1", [userId, step]);
-    return true;
+    // Lot H6 : pas mémorisé seulement s'il avance ; deux requêtes simultanées avec le même code ne passent pas
+    // toutes les deux (la lecture ci-dessus et cette écriture sont deux instructions distinctes).
+    const r = await q.query("UPDATE users SET totp_last_step = $2 WHERE id = $1 AND (totp_last_step IS NULL OR totp_last_step < $2)", [userId, step]);
+    return (r.rowCount ?? 0) === 1;
   }
   if (input.recoveryCode) {
     const r = await q.query(

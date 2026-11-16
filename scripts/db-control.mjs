@@ -77,9 +77,21 @@ export async function tableContents(q, relations) {
 export const quoteName = (name) => name.split(".").map((p) => `"${p.replace(/"/g, '""')}"`).join(".");
 
 /** Différences entre deux instantanés (liste vide = identiques). */
-export function compare(expected, actual) {
+export function compare(expected, actual, { sequencesAtLeast = false } = {}) {
   const diffs = [];
   for (const key of Object.keys(expected)) {
+    // Lot H6 : la valeur d'une séquence n'est pas transactionnelle ; pg_dump la lit après l'instantané de
+    // contrôle. Pour la restauration, une valeur restaurée supérieure ou égale est donc normale.
+    if (key === "sequences" && sequencesAtLeast) {
+      const a = new Map((actual[key] ?? []).map((x) => [x.name, x]));
+      for (const v of expected[key]) {
+        const got = a.get(v.name);
+        if (!got) diffs.push(`${key} : ${v.name} absent`);
+        else if (BigInt(got.last_value ?? 0) < BigInt(v.last_value ?? 0)) diffs.push(`${key} : ${v.name} en retard (attendu au moins ${v.last_value}, obtenu ${got.last_value})`);
+      }
+      for (const k of a.keys()) if (!expected[key].some((v) => v.name === k)) diffs.push(`${key} : ${k} en trop`);
+      continue;
+    }
     const a = new Map((actual[key] ?? []).map((x) => [x.name ?? JSON.stringify(x), x]));
     const e = new Map(expected[key].map((x) => [x.name ?? JSON.stringify(x), x]));
     for (const [k, v] of e) {

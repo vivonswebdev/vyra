@@ -15,6 +15,8 @@ export function servableStates(app: FastifyInstance): string[] {
 /**
  * Dépôt d'un fichier par l'utilisateur. `q` doit être hors transaction (requêtes isolées, app.asUser) : le
  * verdict « infecté » ou « erreur d'analyse » est enregistré même si la requête échoue ensuite.
+ * Lot H6 : l'utilisateur crée la ligne « en attente » ; le verdict et l'emplacement définitif sont écrits par
+ * vyra_worker (app.worker), jamais dans le contexte de l'utilisateur (migration 014).
  */
 export async function quarantineAndScan(
   app: FastifyInstance,
@@ -35,7 +37,7 @@ export async function quarantineAndScan(
     const key = newStorageKey(file.prefix, file.ext);
     await app.storage.put(key, file.bytes);
     await app.storage.delete(qkey);
-    const r = await q.query("UPDATE files SET storage_key = $2, scan_status = 'unscanned', scan_engine = 'aucun' WHERE id = $1 RETURNING *", [id, key]);
+    const r = await app.worker.query("UPDATE files SET storage_key = $2, scan_status = 'unscanned', scan_engine = 'aucun' WHERE id = $1 RETURNING *", [id, key]);
     return r.rows[0];
   }
 
@@ -46,7 +48,7 @@ export async function quarantineAndScan(
     const key = newStorageKey(file.prefix, file.ext);
     await app.storage.put(key, file.bytes);
     await app.storage.delete(qkey);
-    const r = await q.query(
+    const r = await app.worker.query(
       "UPDATE files SET storage_key = $2, scan_status = 'clean', scan_engine = $3, scanned_at = now() WHERE id = $1 RETURNING *",
       [id, key, app.scanner.engine],
     );
@@ -55,7 +57,7 @@ export async function quarantineAndScan(
   }
   if (v.verdict === "infected") {
     await app.storage.delete(qkey);
-    await q.query("UPDATE files SET scan_status = 'infected', scan_detail = $2, scan_engine = $3, scanned_at = now(), deleted_at = now() WHERE id = $1", [
+    await app.worker.query("UPDATE files SET scan_status = 'infected', scan_detail = $2, scan_engine = $3, scanned_at = now(), deleted_at = now() WHERE id = $1", [
       id,
       v.signature,
       app.scanner.engine,
@@ -64,7 +66,7 @@ export async function quarantineAndScan(
     app.log.warn({ file: id, signature: v.signature }, "fichier infecté refusé");
     throw new HttpError(422, "file_infected", "Fichier refusé : l'analyse antivirus a détecté une menace.", { signature: v.signature });
   }
-  await q.query("UPDATE files SET scan_status = 'error', scan_detail = $2, scan_engine = $3, scanned_at = now() WHERE id = $1", [id, v.detail, app.scanner.engine]);
+  await app.worker.query("UPDATE files SET scan_status = 'error', scan_detail = $2, scan_engine = $3, scanned_at = now() WHERE id = $1", [id, v.detail, app.scanner.engine]);
   await audit(q, { actorId: file.ownerId, action: "file.scan_error", subject: `file:${id}`, ip: file.ip, details: { detail: v.detail } });
   app.log.error({ file: id, detail: v.detail }, "analyse antivirus impossible : fichier conservé en quarantaine");
   throw new HttpError(503, "scan_unavailable", "Analyse antivirus momentanément indisponible : le fichier est gardé en quarantaine et n'est pas utilisé. Réessayez dans quelques minutes.");

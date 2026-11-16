@@ -26,7 +26,8 @@ afterAll(async () => teardown(ctx));
 const PW = "un-mot-de-passe-solide";
 const RLS_TABLES = ["audit_log", "auth_tokens", "email_outbox", "files", "project_exports", "project_files", "project_versions", "projects", "sessions",
   "thread_charts", "user_recovery_codes", "user_roles", "users"];
-const NO_RLS = ["auth_throttle", "mfa_challenges", "rate_limits", "schema_migrations"];
+// Hors RLS : tables techniques sans propriétaire de ligne ; admin_guard_* (014) : réservées au propriétaire.
+const NO_RLS = ["admin_guard_lock", "admin_guard_tx", "auth_throttle", "mfa_challenges", "rate_limits", "schema_migrations"];
 
 interface Person { c: Client; id: string; email: string; hash: string; project: string; file: string; chart: string }
 
@@ -275,6 +276,31 @@ describe("fuite entre transactions (P-LEAK-1, A-LEAK-1)", () => {
     }
   });
 
+  it("connexion coupée au milieu d'une transaction : transaction annulée, connexion détruite et non réutilisée (P-LEAK-2)", async () => {
+    const a = await person();
+    const one = new pg.Pool({ connectionString: TEST_DB, max: 1, options: `-c search_path=${SEARCH_PATH.replace(" ", "")}` });
+    one.on("connect", (cl) => void cl.query("SET ROLE vyra_app"));
+    const ctxA = { userId: a.id, sessionHash: Buffer.from(a.hash, "hex") };
+    try {
+      let pid = 0;
+      await expect(
+        withUser(one, ctxA, async (cl) => {
+          pid = (await cl.query("SELECT pg_backend_pid() AS p")).rows[0].p;
+          expect((await cl.query("UPDATE projects SET name = 'coupé' WHERE id = $1", [a.project])).rowCount).toBe(1);
+          await ctx.db.query("SELECT pg_terminate_backend($1)", [pid]); // coupure côté serveur
+          await cl.query("SELECT 1");
+        }),
+      ).rejects.toThrow();
+      // Rien n'a été validé ; la connexion suivante est une autre, sans contexte, et fonctionne.
+      expect((await ctx.db.query("SELECT name FROM projects WHERE id = $1", [a.project])).rows[0].name).toBe("P");
+      const next = await withUser(one, ctxA, async (cl) => (await cl.query("SELECT pg_backend_pid() AS p, (SELECT count(*)::int FROM projects) AS n")).rows[0]);
+      expect(next.p).not.toBe(pid);
+      expect(next.n).toBe(1);
+    } finally {
+      await one.end();
+    }
+  });
+
   it("pool d'une seule connexion : 200 requêtes alternées de A et B en parallèle, aucune réponse ne contient les données de l'autre", async () => {
     const one = new pg.Pool({ connectionString: TEST_DB, max: 1, options: `-c search_path=${SEARCH_PATH.replace(" ", "")}` });
     one.on("connect", (cl) => void cl.query("SET ROLE vyra_app"));
@@ -304,7 +330,7 @@ describe("fuite entre transactions (P-LEAK-1, A-LEAK-1)", () => {
 });
 
 describe("catalogue (P-PRIV-4, P-FN-1, P-FN-2)", () => {
-  it("toute table de vyra a RLS active et forcée, avec des politiques à rôle explicite, sauf les 4 tables techniques documentées", async () => {
+  it("toute table de vyra a RLS active et forcée, avec des politiques à rôle explicite, sauf les 6 tables techniques documentées", async () => {
     const { rows } = await ctx.db.query(
       `SELECT c.relname t, c.relrowsecurity rls, c.relforcerowsecurity f, (SELECT count(*)::int FROM pg_policies p WHERE p.schemaname = 'vyra' AND p.tablename = c.relname) n
          FROM pg_class c WHERE c.relnamespace = 'vyra'::regnamespace AND c.relkind = 'r' ORDER BY 1`,
@@ -327,11 +353,11 @@ describe("catalogue (P-PRIV-4, P-FN-1, P-FN-2)", () => {
               has_function_privilege('vyra_worker', p.oid, 'EXECUTE') wrk, has_function_privilege('vyra_market', p.oid, 'EXECUTE') mkt
          FROM pg_proc p WHERE p.pronamespace = 'vyra'::regnamespace ORDER BY 1`,
     );
-    expect(rows.map((r) => r.n)).toEqual(["admin_find_user", "admin_guard_check", "admin_guard_count", "admin_guard_counts", "admin_guard_note",
+    expect(rows.map((r) => r.n)).toEqual(["admin_find_user", "admin_guard_check", "admin_guard_count", "admin_guard_counts", "admin_guard_is_last", "admin_guard_lock", "admin_guard_note",
       "admin_reset_mfa", "admin_set_role", "ctx_user", "has_staff_role"]);
     for (const r of rows) {
       expect([r.d, r.cfg, r.pub, r.sys, r.wrk, r.mkt], r.n).toEqual([true, '{"search_path=\\"\\""}', false, false, false, false]);
-      expect(r.app, r.n).toBe(!["admin_guard_check", "admin_guard_note"].includes(r.n));
+      expect(r.app, r.n).toBe(!["admin_guard_check", "admin_guard_count", "admin_guard_note"].includes(r.n));
     }
   });
 

@@ -145,6 +145,13 @@ export async function buildApp({ cfg, db, sys = db, worker = db, storage, scanne
         error: { code: err.code, ...(err.reason && err.reason !== err.code ? { reason: err.reason } : {}), ...(err.params ? { params: err.params } : {}), message: err.message, details: err.details },
       });
     const e = err as { statusCode?: number; code?: string; message: string };
+    // Lots H5-H6 : refus posés par la base elle-même (seconde barrière). Ils surviennent quand l'état change entre
+    // le contrôle de l'API et la requête (rôle retiré par un autre administrateur pendant la requête, dernier
+    // administrateur retiré par une transaction concurrente) : réponse claire au lieu d'une erreur 500.
+    if (e.code === "42501" && e.message === "staff_required")
+      return reply.code(403).send({ error: { code: "forbidden", reason: "role_required", message: "Opération réservée au personnel habilité." } });
+    if (e.code === "23514" && e.message.startsWith("last_admin"))
+      return reply.code(409).send({ error: { code: "conflict", reason: "last_admin", message: "Opération refusée : c'est le dernier administrateur actif avec la double authentification." } });
     if (e.statusCode && e.statusCode < 500) {
       const message = e.statusCode === 429 ? "Trop de requêtes. Patientez un instant." : e.statusCode === 413 ? "Contenu trop volumineux." : e.message;
       return reply.code(e.statusCode).send({ error: { code: e.code ?? "error", message } });

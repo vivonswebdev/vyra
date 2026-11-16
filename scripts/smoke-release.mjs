@@ -8,7 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { CreateBucketCommand, S3Client } from "@aws-sdk/client-s3";
 
 const tarball = path.resolve(process.argv[2] ?? "");
@@ -84,6 +84,17 @@ const prodEnv = {
   STORAGE_DRIVER: "s3", S3_ENDPOINT: S3.endpoint, S3_REGION: "us-east-1", S3_BUCKET: bucket, S3_ACCESS_KEY_ID: S3.ak, S3_SECRET_ACCESS_KEY: S3.sk,
   METRICS_TOKEN: metricsToken, LOG_LEVEL: "warn",
 };
+// Lot H6 (O-MIG-4, critère global 4) : le serveur de production refuse de démarrer quand une migration est en
+// attente, quand les identifiants de migration lui sont fournis, ou avec un rôle autre que vyra_app.
+const RUNTIME_ENV = { DATABASE_URL: APP_URL, SYSTEM_DATABASE_URL: SYSTEM_URL, WORKER_DATABASE_URL: WORKER_URL };
+const mustRefuse = (label, extra) => {
+  const r = spawnSync(process.execPath, ["dist/api/server.mjs"], { cwd: app, env: { ...prodEnv, ...RUNTIME_ENV, ...extra }, encoding: "utf8", timeout: 30_000 });
+  if (r.status === 0 || r.status === null) throw new Error(`le serveur aurait dû refuser de démarrer (${label}) : code ${r.status}`);
+  return r.stderr || "";
+};
+const refusedPending = mustRefuse("migrations en attente", {});
+if (!/pas à jour|Démarrage refusé/.test(refusedPending)) throw new Error("refus inattendu : " + refusedPending);
+step("refus de démarrer tant que des migrations sont en attente");
 execFileSync(process.execPath, ["dist/api/migrate.mjs"], {
   cwd: app, stdio: "inherit",
   env: { ...prodEnv, DATABASE_URL: APP_URL, SYSTEM_DATABASE_URL: SYSTEM_URL, WORKER_DATABASE_URL: WORKER_URL, MIGRATION_DATABASE_URL: MIGRATOR_URL, MIGRATION_SET_ROLE: "vyra_owner" },
@@ -98,10 +109,13 @@ execFileSync(process.execPath, ["dist/api/migrate.mjs"], {
   );
   const grants = (await c.query("SELECT has_table_privilege('vyra_app', 'vyra.users', 'TRUNCATE') t, has_column_privilege('vyra_app', 'vyra.users', 'email', 'UPDATE') e, has_table_privilege('vyra_market', 'vyra.users', 'SELECT') m")).rows[0];
   await c.end();
-  if (JSON.stringify(rows) !== JSON.stringify([{ s: "vyra", o: "vyra_owner", n: 17 }])) throw new Error("schéma : " + JSON.stringify(rows));
+  if (JSON.stringify(rows) !== JSON.stringify([{ s: "vyra", o: "vyra_owner", n: 19 }])) throw new Error("schéma : " + JSON.stringify(rows));
   if (grants.t || grants.e || grants.m) throw new Error("droits : " + JSON.stringify(grants));
 }
-step("migration séparée par vyra_migrator : 17 tables dans le schéma vyra, possédées par vyra_owner, droits de la matrice (009)");
+step("migration séparée par vyra_migrator : 19 tables dans le schéma vyra (dont 2 techniques de la garde du dernier administrateur), possédées par vyra_owner, droits de la matrice (009)");
+if (!/MIGRATION_DATABASE_URL/.test(mustRefuse("identifiants de migration fournis", { MIGRATION_DATABASE_URL: MIGRATOR_URL }))) throw new Error("refus attendu : MIGRATION_DATABASE_URL");
+{ const m = mustRefuse("rôle de migration à la place de vyra_app", { DATABASE_URL: MIGRATOR_URL }); if (!/vyra_migrator[^\n]*Démarrage refusé/.test(m)) throw new Error("refus attendu : rôle ; obtenu : " + m.slice(-400)); }
+step("refus de démarrer avec les identifiants de migration, ou avec un rôle capable de prendre vyra_owner au lieu de vyra_app");
 
 // 4. Démarrage en production avec vyra_app
 const child = spawn(process.execPath, ["dist/api/server.mjs"], {

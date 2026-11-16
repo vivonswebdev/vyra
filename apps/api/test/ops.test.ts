@@ -22,7 +22,7 @@ describe("exploitation", () => {
     const r = await ctx.app.inject({ url: "/api/ready" });
     expect(r.statusCode).toBe(200);
     expect(Object.keys(r.json().checks)).toEqual(["database", "migrations", "storage", "engine", "email_outbox"]);
-    expect(r.json().checks.migrations.detail).toMatch(/12 appliquée/);
+    expect(r.json().checks.migrations.detail).toMatch(/13 appliquée/);
   });
 
   it("disponibilité en échec si l'antivirus est injoignable ou un e-mail est en échec définitif", async () => {
@@ -66,6 +66,6 @@ describe("exploitation", () => {
     const s = await migrationStatus(ctx.appDb);
     expect(s.pending).toEqual([]);
     expect(s.modified).toEqual([]);
-    expect(s.applied).toHaveLength(12);
+    expect(s.applied).toHaveLength(13);
   });
 });

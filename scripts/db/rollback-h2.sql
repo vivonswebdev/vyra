@@ -7,7 +7,7 @@
 --
 -- Effets, dans une seule transaction (tout ou rien) :
 --   1. contrôles : registre dans vyra, migrations 007-009 appliquées (et éventuellement 010 [H3], 011 [H4],
---      012-013 [H5]), aucune autre ; RLS désactivée et politiques retirées (013), fonctions de contexte et
+--      012-013 [H5], 014 [H6]), aucune autre ; RLS désactivée et politiques retirées (013), fonctions de contexte et
 --      d'administration (012) et déclencheurs et fonctions du dernier administrateur (011) retirés ;
 --   2. les 16 tables et le registre reviennent dans public (catalogue seulement, aucune copie) ;
 --   3. droits de transition du lot H1 rétablis (vyra_app : opérations de données sur toutes les tables du socle) ;
@@ -34,7 +34,8 @@ BEGIN
      AND applied IS DISTINCT FROM ARRAY['007_core_user_roles_fk.sql', '008_core_schema_vyra.sql', '009_core_privileges.sql', '010_core_privileges_split.sql']
      AND applied IS DISTINCT FROM ARRAY['007_core_user_roles_fk.sql', '008_core_schema_vyra.sql', '009_core_privileges.sql', '010_core_privileges_split.sql', '011_core_session_assurance.sql']
      AND applied IS DISTINCT FROM ARRAY['007_core_user_roles_fk.sql', '008_core_schema_vyra.sql', '009_core_privileges.sql', '010_core_privileges_split.sql', '011_core_session_assurance.sql', '012_core_ctx_functions.sql']
-     AND applied IS DISTINCT FROM ARRAY['007_core_user_roles_fk.sql', '008_core_schema_vyra.sql', '009_core_privileges.sql', '010_core_privileges_split.sql', '011_core_session_assurance.sql', '012_core_ctx_functions.sql', '013_core_rls.sql'] THEN
+     AND applied IS DISTINCT FROM ARRAY['007_core_user_roles_fk.sql', '008_core_schema_vyra.sql', '009_core_privileges.sql', '010_core_privileges_split.sql', '011_core_session_assurance.sql', '012_core_ctx_functions.sql', '013_core_rls.sql']
+     AND applied IS DISTINCT FROM ARRAY['007_core_user_roles_fk.sql', '008_core_schema_vyra.sql', '009_core_privileges.sql', '010_core_privileges_split.sql', '011_core_session_assurance.sql', '012_core_ctx_functions.sql', '013_core_rls.sql', '014_core_security_review.sql'] THEN
     RAISE EXCEPTION 'Migrations postérieures à H1 inattendues : % (retour arrière refusé).', applied;
   END IF;
 
@@ -46,6 +47,8 @@ BEGIN
     EXECUTE format('ALTER TABLE vyra.%I NO FORCE ROW LEVEL SECURITY', t);
     EXECUTE format('ALTER TABLE vyra.%I DISABLE ROW LEVEL SECURITY', t);
   END LOOP;
+  -- Lot H6 (014) : verrou et état de la garde du dernier administrateur (tables techniques, sans donnée utile).
+  DROP FUNCTION IF EXISTS vyra.admin_guard_is_last(uuid);
   DROP FUNCTION IF EXISTS vyra.admin_reset_mfa(uuid);
   DROP FUNCTION IF EXISTS vyra.admin_set_role(uuid, text, boolean);
   DROP FUNCTION IF EXISTS vyra.admin_find_user(text);
@@ -62,6 +65,9 @@ BEGIN
   DROP FUNCTION IF EXISTS vyra.admin_guard_check();
   DROP FUNCTION IF EXISTS vyra.admin_guard_note();
   DROP FUNCTION IF EXISTS vyra.admin_guard_count();
+  DROP FUNCTION IF EXISTS vyra.admin_guard_lock();
+  DROP TABLE IF EXISTS vyra.admin_guard_tx;
+  DROP TABLE IF EXISTS vyra.admin_guard_lock;
 
   FOREACH t IN ARRAY tabs || ARRAY['schema_migrations'] LOOP
     IF to_regclass(format('public.%I', t)) IS NOT NULL THEN
@@ -83,7 +89,7 @@ BEGIN
     EXECUTE format('GRANT USAGE ON SEQUENCE public.%I TO vyra_app', t);
   END LOOP;
 
-  DELETE FROM public.schema_migrations WHERE name IN ('007_core_user_roles_fk.sql', '008_core_schema_vyra.sql', '009_core_privileges.sql', '010_core_privileges_split.sql', '011_core_session_assurance.sql', '012_core_ctx_functions.sql', '013_core_rls.sql');
+  DELETE FROM public.schema_migrations WHERE name IN ('007_core_user_roles_fk.sql', '008_core_schema_vyra.sql', '009_core_privileges.sql', '010_core_privileges_split.sql', '011_core_session_assurance.sql', '012_core_ctx_functions.sql', '013_core_rls.sql', '014_core_security_review.sql');
 END $$;
 
 ALTER DEFAULT PRIVILEGES FOR ROLE vyra_owner GRANT EXECUTE ON FUNCTIONS TO PUBLIC;

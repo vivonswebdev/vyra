@@ -22,15 +22,6 @@ const worker = cfg.WORKER_DATABASE_URL ? createPool(cfg.WORKER_DATABASE_URL) : d
 const pools = [...new Set([db, sys, worker])];
 const closeAll = () => Promise.all(pools.map((p) => p.end()));
 
-const state = await migrationStatus(db);
-if (state.pending.length || state.modified.length || state.orphans.length) {
-  console.error(
-    "Base de données pas à jour : lancez d'abord `npm run db:migrate`.\n" +
-      JSON.stringify({ pending: state.pending, modified: state.modified, orphans: state.orphans }),
-  );
-  await closeAll();
-  process.exit(1);
-}
 const expected: [Db, string, string][] = [[db, "vyra_app", "DATABASE_URL"], [sys, "vyra_system", "SYSTEM_DATABASE_URL"], [worker, "vyra_worker", "WORKER_DATABASE_URL"]];
 const checked = new Set<Db>();
 for (const [pool, name, variable] of expected) {
@@ -47,6 +38,24 @@ for (const [pool, name, variable] of expected) {
     process.exit(1);
   }
   console.warn(msg + " Accepté hors production uniquement.");
+}
+// Lot H6 : les rôles sont vérifiés ci-dessus, avant toute lecture (une connexion au mauvais rôle est refusée avec
+// un message clair) ; un registre illisible est une anomalie, signalée sans trace d'exception.
+let state: Awaited<ReturnType<typeof migrationStatus>>;
+try {
+  state = await migrationStatus(db);
+} catch (e) {
+  console.error(`Lecture du registre des migrations impossible (${(e as Error).message}). Démarrage refusé.`);
+  await closeAll();
+  process.exit(1);
+}
+if (state.pending.length || state.modified.length || state.orphans.length) {
+  console.error(
+    "Base de données pas à jour : lancez d'abord `npm run db:migrate`.\n" +
+      JSON.stringify({ pending: state.pending, modified: state.modified, orphans: state.orphans }),
+  );
+  await closeAll();
+  process.exit(1);
 }
 const app = await buildApp({ cfg, db, sys, worker });
 rescanUnscanned(app).catch((e) => app.log.error(e));

@@ -92,6 +92,10 @@ droits transitoires du lot H2 : l'API d'une version antérieure à H3 ne fonctio
 Chaque requête faite pour un utilisateur connecté s'exécute dans une transaction qui porte son identifiant et
 l'empreinte de sa session (`set_config(…, true)`).
 
+**Sécurité de la base (lots H5 et H6).** Garanties, limites, rotation des mots de passe des rôles et
+récupération d'un administrateur : [SECURITE-BASE.md](SECURITE-BASE.md). La migration `014_core_security_review`
+applique les corrections de la revue de sécurité du lot H6.
+
 **Sécurité au niveau des lignes (lot H5).** Les 13 tables rattachées à un utilisateur sont sous RLS **forcée**
 (`013_core_rls`) : `vyra_app` ne voit et ne modifie que les lignes de l'utilisateur dont la session est confirmée
 par `vyra.ctx_user()` (session non expirée de cet utilisateur, compte actif, avec cette empreinte) ; sans
@@ -130,11 +134,11 @@ le registre (catalogue seulement, aucune copie ; verrou bref, `lock_timeout` 10 
 deux schémas annule la migration. Prévoir une courte fenêtre de maintenance.
 
 **Retour arrière.** Les migrations ne se défont pas (pas de « down ») ; la voie normale est le retour en avant
-(nouvelle migration corrective). Revenir au code du lot H1 après 007-013 est impossible tel quel (le serveur H1
+(nouvelle migration corrective). Revenir au code du lot H1 après 007-014 est impossible tel quel (le serveur H1
 verrait des migrations orphelines et refuserait de démarrer). Deux possibilités, API arrêtée :
 - `psql "<url vyra_migrator>" -v ON_ERROR_STOP=1 --single-transaction -f scripts/db/rollback-h2.sql` : RLS
-  désactivée et politiques retirées (013), fonctions de 012 et 011 retirées, tables et registre remis dans
-  `public`, droits du lot H1 rétablis, lignes 007-013 retirées du registre, schéma `vyra` (vide) supprimé ; **aucune perte de données** (aller-retour vérifié en test : `db-roles.test.ts`) ;
+  désactivée et politiques retirées (013), fonctions et tables techniques de 014, 012 et 011 retirées, tables et registre remis dans
+  `public`, droits du lot H1 rétablis, lignes 007-014 retirées du registre, schéma `vyra` (vide) supprimé ; **aucune perte de données** (aller-retour vérifié en test : `db-roles.test.ts`) ;
 - ou restauration de la sauvegarde de l'étape 1 dans une base neuve (les écritures postérieures sont perdues).
 
 ## Sauvegardes
