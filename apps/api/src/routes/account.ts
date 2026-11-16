@@ -13,6 +13,7 @@ import { newTotpSecret, otpauthUri, verifyTotp } from "../lib/totp.js";
 import { zip } from "../lib/zip.js";
 import { queueSecurityAlert } from "../lib/mailer.js";
 import { servableStates } from "../lib/quarantine.js";
+import { assertNotLastAdmin } from "../lib/admin-guard.js";
 import { sessionCookieName } from "../plugins/auth.js";
 
 const Code = z.string().trim().regex(/^\d{6}$/, { error: "Code à 6 chiffres attendu." });
@@ -158,8 +159,10 @@ export default async function accountRoutes(app: FastifyInstance) {
       const rc = newRecoveryCodes();
       await c.query("DELETE FROM user_recovery_codes WHERE user_id = $1", [u.id]);
       for (const h of rc.hashes) await c.query("INSERT INTO user_recovery_codes (user_id, code_hash) VALUES ($1, $2)", [u.id, h]);
-      // Les autres appareils, ouverts sans second facteur, sont déconnectés.
+      // Les autres appareils, ouverts sans second facteur, sont déconnectés ; la session courante vient de
+      // prouver le second facteur (lot H4 : niveau « mfa »).
       await c.query("DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2", [u.id, req.sessionHash]);
+      await c.query("UPDATE sessions SET auth_level = 'mfa', mfa_at = now(), mfa_via = 'totp' WHERE token_hash = $1", [req.sessionHash]);
       await audit(c, { actorId: u.id, action: "account.2fa_enabled", subject: `user:${u.id}`, ip: req.ip });
       await queueSecurityAlert(c, cfg, u, "2fa_enabled");
       return rc.plain;
@@ -187,7 +190,10 @@ export default async function accountRoutes(app: FastifyInstance) {
     await requirePassword(req, u.id, input.password);
     if (!(await checkSecondFactor(app.asUser(req), box, u.id, input))) throw badRequest("wrong_code", "Code incorrect.");
     await app.withUser(req, async (c) => {
+      await assertNotLastAdmin(c, u.id);
       await c.query("UPDATE users SET totp_secret_enc = NULL, totp_pending_enc = NULL, totp_enabled_at = NULL, totp_last_step = NULL WHERE id = $1", [u.id]);
+      // Sans second facteur, aucune session ne garde le niveau « mfa » (lot H4).
+      await c.query("UPDATE sessions SET auth_level = 'password', mfa_at = NULL, mfa_via = NULL WHERE user_id = $1", [u.id]);
       await c.query("DELETE FROM user_recovery_codes WHERE user_id = $1", [u.id]);
       await audit(c, { actorId: u.id, action: "account.2fa_disabled", subject: `user:${u.id}`, ip: req.ip });
       await queueSecurityAlert(c, cfg, u, "2fa_disabled");
@@ -270,6 +276,7 @@ export default async function accountRoutes(app: FastifyInstance) {
     await requirePassword(req, u.id, input.password);
     if (!(await checkSecondFactor(app.asUser(req), box, u.id, input))) throw new HttpError(400, "mfa_required", "Code de double authentification requis ou incorrect.");
     const keys = await app.withUser(req, async (c) => {
+      await assertNotLastAdmin(c, u.id);
       const { rows } = await c.query("SELECT storage_key FROM files WHERE owner_id = $1", [u.id]);
       // Les e-mails en file contiennent des liens personnels : supprimés avec le compte.
       await c.query("DELETE FROM email_outbox WHERE to_email = $1", [u.email]);

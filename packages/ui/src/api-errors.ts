@@ -10,6 +10,13 @@ export const API_ERRORS: Record<string, T4> = {
   // Catégories générales
   unauthorized: ["Connexion requise.", "Aanmelding vereist.", "Please sign in.", "يلزم تسجيل الدخول."],
   forbidden: ["Accès refusé.", "Toegang geweigerd.", "Access denied.", "تم رفض الوصول."],
+  // Socle H4 : personnel, niveau de confiance, dernier administrateur
+  role_required: ["Opération réservée au personnel habilité.", "Alleen voor bevoegd personeel.", "Reserved for authorised staff.", "عملية مخصصة للموظفين المخوّلين."],
+  mfa_not_enabled: ["Activez d'abord la double authentification sur votre compte.", "Schakel eerst tweestapsverificatie in voor je account.", "Turn on two-factor authentication on your account first.", "فعّل أولًا المصادقة الثنائية على حسابك."],
+  mfa_step_up_required: ["Saisissez à nouveau le code de votre application d'authentification (valable {min} min).", "Voer de code van je authenticatie-app opnieuw in (geldig {min} min).", "Enter the code from your authenticator app again (valid for {min} min).", "أدخل الرمز من تطبيق المصادقة مرة أخرى (صالح لمدة {min} دقيقة)."],
+  last_admin: ["Refusé : c'est le dernier administrateur actif avec la double authentification. Nommez d'abord un autre administrateur.", "Geweigerd: dit is de laatste actieve beheerder met tweestapsverificatie. Benoem eerst een andere beheerder.", "Refused: this is the last active administrator with two-factor authentication. Appoint another administrator first.", "مرفوض: هذا آخر مسؤول نشط لديه المصادقة الثنائية. عيّن مسؤولًا آخر أولًا."],
+  user_not_found: ["Aucun compte correspondant.", "Geen overeenkomend account.", "No matching account.", "لا يوجد حساب مطابق."],
+  own_mfa_reset: ["Pour votre propre compte, utilisez vos réglages de sécurité.", "Gebruik voor je eigen account je beveiligingsinstellingen.", "For your own account, use your security settings.", "لحسابك الخاص، استخدم إعدادات الأمان."],
   not_found: ["Introuvable.", "Niet gevonden.", "Not found.", "غير موجود."],
   csrf: ["Requête refusée par mesure de sécurité. Rechargez la page.", "Verzoek om veiligheidsredenen geweigerd. Herlaad de pagina.", "Request refused for security reasons. Reload the page.", "رُفض الطلب لأسباب أمنية. أعد تحميل الصفحة."],
   validation: ["Données invalides.", "Ongeldige gegevens.", "Invalid data.", "بيانات غير صالحة."],

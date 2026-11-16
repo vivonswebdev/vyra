@@ -6,10 +6,11 @@
 -- Ensuite, par l'administrateur (facultatif) : ALTER ROLE … IN DATABASE … RESET search_path pour chaque rôle.
 --
 -- Effets, dans une seule transaction (tout ou rien) :
---   1. contrôles : registre dans vyra, migrations 007-009 (et 010, lot H3) appliquées, aucune autre postérieure ;
+--   1. contrôles : registre dans vyra, migrations 007-009 appliquées (et éventuellement 010 [H3], 011 [H4]),
+--      aucune autre ; les déclencheurs et fonctions du dernier administrateur (011) sont retirés ;
 --   2. les 16 tables et le registre reviennent dans public (catalogue seulement, aucune copie) ;
 --   3. droits de transition du lot H1 rétablis (vyra_app : opérations de données sur toutes les tables du socle) ;
---   4. lignes 007-010 retirées du registre (le runner H1 ne les connaît pas : sinon il refuserait de démarrer) ;
+--   4. lignes 007-011 retirées du registre (le runner H1 ne les connaît pas : sinon il refuserait de démarrer) ;
 --   5. schéma vyra supprimé s'il est vide (sinon échec et annulation) : le runner H1 y recréerait un registre vide.
 -- La clé étrangère corrigée par 007 (ON DELETE SET NULL) est conservée : elle est compatible avec le code H1.
 SET ROLE vyra_owner;
@@ -28,9 +29,20 @@ BEGIN
   END IF;
   SELECT array_agg(name ORDER BY name) INTO applied FROM vyra.schema_migrations WHERE name >= '007';
   IF applied IS DISTINCT FROM ARRAY['007_core_user_roles_fk.sql', '008_core_schema_vyra.sql', '009_core_privileges.sql']
-     AND applied IS DISTINCT FROM ARRAY['007_core_user_roles_fk.sql', '008_core_schema_vyra.sql', '009_core_privileges.sql', '010_core_privileges_split.sql'] THEN
+     AND applied IS DISTINCT FROM ARRAY['007_core_user_roles_fk.sql', '008_core_schema_vyra.sql', '009_core_privileges.sql', '010_core_privileges_split.sql']
+     AND applied IS DISTINCT FROM ARRAY['007_core_user_roles_fk.sql', '008_core_schema_vyra.sql', '009_core_privileges.sql', '010_core_privileges_split.sql', '011_core_session_assurance.sql'] THEN
     RAISE EXCEPTION 'Migrations postérieures à H1 inattendues : % (retour arrière refusé).', applied;
   END IF;
+
+  -- Lot H4 : déclencheurs et fonctions du dernier administrateur (inconnus du code H1). Les colonnes de niveau
+  -- de session restent (valeurs par défaut compatibles avec le code H1).
+  DROP TRIGGER IF EXISTS user_roles_admin_guard_note ON vyra.user_roles;
+  DROP TRIGGER IF EXISTS user_roles_admin_guard_check ON vyra.user_roles;
+  DROP TRIGGER IF EXISTS users_admin_guard_note ON vyra.users;
+  DROP TRIGGER IF EXISTS users_admin_guard_check ON vyra.users;
+  DROP FUNCTION IF EXISTS vyra.admin_guard_check();
+  DROP FUNCTION IF EXISTS vyra.admin_guard_note();
+  DROP FUNCTION IF EXISTS vyra.admin_guard_count();
 
   FOREACH t IN ARRAY tabs || ARRAY['schema_migrations'] LOOP
     IF to_regclass(format('public.%I', t)) IS NOT NULL THEN
@@ -52,7 +64,7 @@ BEGIN
     EXECUTE format('GRANT USAGE ON SEQUENCE public.%I TO vyra_app', t);
   END LOOP;
 
-  DELETE FROM public.schema_migrations WHERE name IN ('007_core_user_roles_fk.sql', '008_core_schema_vyra.sql', '009_core_privileges.sql', '010_core_privileges_split.sql');
+  DELETE FROM public.schema_migrations WHERE name IN ('007_core_user_roles_fk.sql', '008_core_schema_vyra.sql', '009_core_privileges.sql', '010_core_privileges_split.sql', '011_core_session_assurance.sql');
 END $$;
 
 ALTER DEFAULT PRIVILEGES FOR ROLE vyra_owner GRANT EXECUTE ON FUNCTIONS TO PUBLIC;

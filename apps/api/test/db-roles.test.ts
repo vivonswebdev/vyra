@@ -105,8 +105,13 @@ async function content(db: string) {
   const s = await snap(db);
   const strip = (x: any) => ({ ...x, name: x.name.replace(/^(vyra|public)\./, "") });
   const byName = (a: any, b: any) => a.name.localeCompare(b.name);
-  // Le registre des migrations change par nature (lignes 007-009) : vérifié à part.
-  return { tables: s.tables.map(strip).filter((t: any) => t.name !== "schema_migrations").sort(byName), sequences: s.sequences.map(strip).sort(byName) };
+  // Le registre des migrations change par nature (lignes 007 et suivantes) : vérifié à part. La table sessions
+  // gagne des colonnes au lot H4 (niveau de session, valeurs par défaut) : comparée sur ses colonnes du lot H1.
+  const schema = (await rows(adminUrl(db), "SELECT n.nspname s FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = 'sessions' AND n.nspname IN ('vyra', 'public')"))[0].s;
+  const sessions = (await rows(adminUrl(db), `SELECT count(*)::int AS rows, md5(string_agg(x, E'\\n' ORDER BY x)) AS checksum
+     FROM (SELECT (token_hash, user_id, created_at, last_seen_at, expires_at, ip, user_agent, id)::text AS x FROM "${schema}".sessions) t`))[0];
+  const tables = s.tables.map(strip).filter((t: any) => t.name !== "schema_migrations" && t.name !== "sessions");
+  return { tables: [...tables, { name: "sessions", ...sessions }].sort(byName), sequences: s.sequences.map(strip).sort(byName) };
 }
 /** Structure (sans données) : propriétaires, droits, contraintes, index, fonctions, politiques. */
 async function structure(db: string) {
@@ -358,7 +363,14 @@ describe.runIf(ENABLED)("rôles PostgreSQL et schéma vyra (instance locale isol
     expect((await rows(adminUrl(d), "SELECT to_regnamespace('vyra') IS NULL v"))[0].v).toBe(true);
     expect(await content(d)).toEqual(h1Content);
     // Mêmes droits, propriétaires, contraintes et index qu'en H1, sauf la clé corrigée par 007 (conservée).
-    expect(compare(h1Structure, await structure(d))).toEqual([expect.stringMatching(/^constraints : public\.user_roles\.user_roles_granted_by_fkey différent/)]);
+    // Restent volontairement : la clé corrigée par 007 et les colonnes de niveau de session de 011 (aucune donnée
+    // effacée par le retour arrière ; valeurs par défaut compatibles avec le code H1).
+    expect(compare(h1Structure, await structure(d)).sort()).toEqual([
+      expect.stringMatching(/^constraints : public\.sessions\.sessions_auth_level_check en trop/),
+      expect.stringMatching(/^constraints : public\.sessions\.sessions_mfa_consistent en trop/),
+      expect.stringMatching(/^constraints : public\.sessions\.sessions_mfa_via_check en trop/),
+      expect.stringMatching(/^constraints : public\.user_roles\.user_roles_granted_by_fkey différent/),
+    ]);
     // Le runner du lot H1 (fichiers 001-005) voit une base à jour, sans orpheline.
     const p = new pg.Pool({ connectionString: urlAs("vyra_app", d) });
     expect(await migrationStatus(p, { dir: migDir(H1_FILES) })).toMatchObject({ pending: [], modified: [], orphans: [] });

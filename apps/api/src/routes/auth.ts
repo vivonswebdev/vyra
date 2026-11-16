@@ -136,7 +136,8 @@ export default async function authRoutes(app: FastifyInstance) {
       throw unauthorized("wrong_code", "Code incorrect.");
     }
     await sys.query("DELETE FROM mfa_challenges WHERE token_hash = $1", [hash]);
-    await app.startSession(reply, req, ch.user_id);
+    // Lot H4 : session de niveau « mfa », en notant si le second facteur était un code de secours.
+    await app.startSession(reply, req, ch.user_id, sys, { via: input.recoveryCode ? "recovery" : "totp" });
     if (input.recoveryCode) {
       const mu = await loadUser(ch.user_id);
       await queueSecurityAlert(sys, cfg, mu, "recovery_used");
@@ -267,10 +268,31 @@ export default async function authRoutes(app: FastifyInstance) {
       await queueSecurityAlert(c, cfg, u, "password_changed");
       // Nouvelle session d'abord, puis fermeture de toutes les autres (dont la session courante) en dernier :
       // sous RLS (lot H5), la transaction perd son contexte dès que la session courante disparaît.
-      const fresh = await app.startSession(reply, req, u.id, c);
+      // La nouvelle session garde le niveau de la session courante (lot H4).
+      const a = req.assurance;
+      const fresh = await app.startSession(reply, req, u.id, c, a?.authLevel === "mfa" && a.mfaVia ? { via: a.mfaVia, at: a.mfaAt } : undefined);
       await c.query("DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2", [u.id, fresh]);
     });
     return { ok: true };
+  });
+
+  // Lot H4 : nouvelle saisie du code TOTP (jamais un code de secours) pour les opérations sensibles du
+  // personnel ; renouvelle la fraîcheur de la session courante, qui reste ouverte.
+  app.post("/api/auth/step-up", strict, async (req) => {
+    const u = app.requireUser(req);
+    const { code } = z.object({ code: z.string().trim().regex(/^\d{6}$/) }).parse(req.body);
+    if (!req.assurance?.mfaEnabled) throw badRequest("mfa_not_enabled", "La double authentification n'est pas activée sur ce compte.");
+    const q = app.asUser(req);
+    if (!(await checkSecondFactor(q, box, u.id, { code }))) {
+      await audit(q, { actorId: u.id, action: "account.step_up_failed", subject: `user:${u.id}`, ip: req.ip });
+      throw badRequest("wrong_code", "Code incorrect.");
+    }
+    const { rows } = await q.query(
+      "UPDATE sessions SET auth_level = 'mfa', mfa_at = now(), mfa_via = 'totp' WHERE token_hash = $1 RETURNING mfa_at",
+      [req.sessionHash],
+    );
+    await audit(q, { actorId: u.id, action: "account.step_up", subject: `user:${u.id}`, ip: req.ip });
+    return { ok: true, mfaAt: new Date(rows[0].mfa_at).toISOString() };
   });
 
   app.patch("/api/me", async (req) => {

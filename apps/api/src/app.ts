@@ -19,6 +19,7 @@ import authPlugin from "./plugins/auth.js";
 import authRoutes from "./routes/auth.js";
 import projectRoutes from "./routes/projects.js";
 import accountRoutes from "./routes/account.js";
+import adminRoutes from "./routes/admin.js";
 import chartRoutes from "./routes/charts.js";
 import devRoutes from "./routes/dev.js";
 import opsRoutes from "./routes/ops.js";
@@ -158,6 +159,7 @@ export async function buildApp({ cfg, db, sys = db, worker = db, storage, scanne
 
   await app.register(authRoutes);
   await app.register(accountRoutes);
+  await app.register(adminRoutes);
   await app.register(chartRoutes);
   await app.register(projectRoutes);
   if (!cfg.isProd && cfg.DEV_MAILBOX) await app.register(devRoutes);
