@@ -10,8 +10,11 @@
 
 const SCHEMAS = ["vyra", "public"];
 
-/** q : fonction (texte, paramètres) → lignes. Doit voir toutes les lignes (vyra_backup, ou propriétaire sans RLS forcé). */
-export async function snapshot(q) {
+/**
+ * q : fonction (texte, paramètres) → lignes. Doit voir toutes les lignes (vyra_backup, ou propriétaire sans RLS
+ * forcé). Avec { contents: false }, seule la structure est relevée (tables : voir tableContents).
+ */
+export async function snapshot(q, { contents = true } = {}) {
   const s = {};
   s.schemas = await q(
     `SELECT nspname AS name, pg_get_userbyid(nspowner) AS owner, nullif(nspacl::text, acldefault('n'::"char", nspowner)::text) AS acl
@@ -55,15 +58,23 @@ export async function snapshot(q) {
        FROM pg_default_acl d LEFT JOIN pg_namespace n ON n.oid = d.defaclnamespace ORDER BY 1, 2, 3`,
   );
   s.sequences = await q(`SELECT schemaname || '.' || sequencename AS name, last_value::text AS last_value FROM pg_sequences WHERE schemaname = ANY($1) ORDER BY 1`, [SCHEMAS]);
-  s.tables = [];
-  for (const t of s.relations.filter((r) => r.kind === "r")) {
-    const [schema, name] = t.name.split(".");
-    const id = `"${schema}"."${name}"`;
-    const [r] = await q(`SELECT count(*)::int AS rows, coalesce(md5(string_agg(x::text, E'\\n' ORDER BY x::text)), '') AS checksum FROM ${id} x`);
-    s.tables.push({ name: t.name, rows: r.rows, checksum: r.checksum });
-  }
+  s.tables = contents ? await tableContents(q, s.relations) : [];
   return s;
 }
+
+/** Nombre de lignes et somme de contrôle de chaque table de `relations` (relevé de snapshot). */
+export async function tableContents(q, relations) {
+  const out = [];
+  for (const t of relations.filter((r) => r.kind === "r")) {
+    const id = quoteName(t.name);
+    const [r] = await q(`SELECT count(*)::int AS rows, coalesce(md5(string_agg(x::text, E'\\n' ORDER BY x::text)), '') AS checksum FROM ${id} x`);
+    out.push({ name: t.name, rows: r.rows, checksum: r.checksum });
+  }
+  return out;
+}
+
+/** « schéma.table » → identifiant SQL entre guillemets. */
+export const quoteName = (name) => name.split(".").map((p) => `"${p.replace(/"/g, '""')}"`).join(".");
 
 /** Différences entre deux instantanés (liste vide = identiques). */
 export function compare(expected, actual) {

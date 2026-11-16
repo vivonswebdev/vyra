@@ -287,6 +287,11 @@ export default async function accountRoutes(app: FastifyInstance) {
       // par la clé étrangère ; l'adresse ne reste que dans cet e-mail de confirmation, sans lien personnel.
       await audit(c, { actorId: u.id, action: "account.deleted", subject: `user:${u.id}`, details: { files: rows.length } });
       await queueSecurityAlert(c, cfg, u, "account_deleted");
+      // Projets d'abord (leurs versions, exports et liens de fichiers suivent par cascade) : la clé
+      // project_exports.file_id est volontairement bloquante (décision D4), et la cascade des fichiers depuis le
+      // compte passerait avant celle des projets. Défaut constaté au lot H5 : tout compte ayant un export ne
+      // pouvait pas être supprimé.
+      await c.query("DELETE FROM projects WHERE owner_id = $1", [u.id]);
       await c.query("DELETE FROM users WHERE id = $1", [u.id]);
       return rows.map((r) => r.storage_key as string);
     });

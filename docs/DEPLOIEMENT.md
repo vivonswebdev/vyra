@@ -90,7 +90,32 @@ refuse de démarrer si une connexion n'utilise pas le rôle attendu. La commande
 configuration : lui fournir les mêmes variables. La migration `010_core_privileges_split` retire à vyra_app les
 droits transitoires du lot H2 : l'API d'une version antérieure à H3 ne fonctionne plus après elle.
 Chaque requête faite pour un utilisateur connecté s'exécute dans une transaction qui porte son identifiant et
-l'empreinte de sa session (`set_config(…, true)`) ; ce contexte sera exigé par les politiques RLS du lot H5.
+l'empreinte de sa session (`set_config(…, true)`).
+
+**Sécurité au niveau des lignes (lot H5).** Les 13 tables rattachées à un utilisateur sont sous RLS **forcée**
+(`013_core_rls`) : `vyra_app` ne voit et ne modifie que les lignes de l'utilisateur dont la session est confirmée
+par `vyra.ctx_user()` (session non expirée de cet utilisateur, compte actif, avec cette empreinte) ; sans
+contexte confirmé, aucune ligne et aucune écriture. `vyra_system` voit les tables de l'authentification ;
+`vyra_worker` ne voit que les lignes de chaque purge. `mfa_challenges`, `auth_throttle`, `rate_limits` et le
+registre restent hors RLS (aucun propriétaire de ligne, aucun accès de `vyra_app`). Les comptes des autres ne
+sont lus ou modifiés que par les fonctions `vyra.admin_*` (`012_core_ctx_functions`), réservées à un
+administrateur ayant saisi un TOTP depuis moins de 15 minutes. Une session révoquée ou un compte suspendu
+pendant une requête : la requête suivante reçoit 401 (`session_expired`). Après `013`, les routes `/api/admin`
+d'une API antérieure à H5 échouent (`vyra_app` n'a plus le droit d'écrire directement les rôles) ; le reste d'une
+API antérieure n'a pas été essayé sur une base en `013` : déployer H5 en même temps que ses migrations.
+
+**Migrations de données sur une table à RLS forcée.** Le propriétaire est filtré lui aussi : un `UPDATE` exécuté
+par une migration toucherait 0 ligne **sans erreur**. Règle, dans la même migration (donc la même transaction) :
+
+```sql
+ALTER TABLE vyra.projects NO FORCE ROW LEVEL SECURITY;
+UPDATE vyra.projects SET …;            -- reprise de données
+ALTER TABLE vyra.projects FORCE ROW LEVEL SECURITY;
+```
+
+Les migrations de structure (colonnes, index, contraintes) ne sont pas concernées. La sauvegarde (`vyra_backup`,
+`BYPASSRLS`) est complète ; la restauration recrée politiques et forçage, et son contrôle compte les lignes en
+levant le forçage dans une transaction annulée.
 
 Procédure de mise à jour :
 
@@ -105,11 +130,11 @@ le registre (catalogue seulement, aucune copie ; verrou bref, `lock_timeout` 10 
 deux schémas annule la migration. Prévoir une courte fenêtre de maintenance.
 
 **Retour arrière.** Les migrations ne se défont pas (pas de « down ») ; la voie normale est le retour en avant
-(nouvelle migration corrective). Revenir au code du lot H1 après 007-010 est impossible tel quel (le serveur H1
+(nouvelle migration corrective). Revenir au code du lot H1 après 007-013 est impossible tel quel (le serveur H1
 verrait des migrations orphelines et refuserait de démarrer). Deux possibilités, API arrêtée :
-- `psql "<url vyra_migrator>" -v ON_ERROR_STOP=1 --single-transaction -f scripts/db/rollback-h2.sql` : tables et
-  registre remis dans `public`, droits du lot H1 rétablis, lignes 007-010 retirées du registre, schéma `vyra`
-  (vide) supprimé ; **aucune perte de données** (aller-retour vérifié en test : `db-roles.test.ts`) ;
+- `psql "<url vyra_migrator>" -v ON_ERROR_STOP=1 --single-transaction -f scripts/db/rollback-h2.sql` : RLS
+  désactivée et politiques retirées (013), fonctions de 012 et 011 retirées, tables et registre remis dans
+  `public`, droits du lot H1 rétablis, lignes 007-013 retirées du registre, schéma `vyra` (vide) supprimé ; **aucune perte de données** (aller-retour vérifié en test : `db-roles.test.ts`) ;
 - ou restauration de la sauvegarde de l'étape 1 dans une base neuve (les écritures postérieures sont perdues).
 
 ## Sauvegardes

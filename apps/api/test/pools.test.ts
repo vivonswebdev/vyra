@@ -3,6 +3,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
 import { withUser } from "../src/db/pool.js";
+import { tokenHash } from "../src/lib/crypto.js";
 import { Client, setup, signup, teardown, TEST_DB, type Ctx } from "./helpers.js";
 
 let ctx: Ctx;
@@ -22,19 +23,24 @@ describe("lot H3 : pools et contexte", () => {
   });
 
   it("le contexte utilisateur vaut pour la transaction seulement, jamais pour la requête suivante sur la même connexion", async () => {
+    // Lot H5 : withUser exige un contexte confirmé par vyra.ctx_user() ; on part donc d'une vraie session.
+    const { c, user } = await signup(ctx.app);
+    const hash = tokenHash(c.cookie.replace(/^vyra_session=/, ""));
     // Pool d'une seule connexion : la requête suivante réutilise forcément la même.
     const one = new pg.Pool({ connectionString: TEST_DB, max: 1 });
-    one.on("connect", (c) => void c.query("SET ROLE vyra_app"));
+    one.on("connect", (cl) => void cl.query("SET ROLE vyra_app"));
     try {
-      const hash = Buffer.from("ab".repeat(32), "hex");
-      const inside = await withUser(one, { userId: "00000000-0000-4000-8000-000000000001", sessionHash: hash }, async (c) =>
-        (await c.query("SELECT current_setting('vyra.user_id', true) AS u, current_setting('vyra.session', true) AS s")).rows[0],
+      const inside = await withUser(one, { userId: user.id, sessionHash: hash }, async (cl) =>
+        (await cl.query("SELECT current_setting('vyra.user_id', true) AS u, current_setting('vyra.session', true) AS s")).rows[0],
       );
-      expect(inside).toEqual({ u: "00000000-0000-4000-8000-000000000001", s: "ab".repeat(32) });
+      expect(inside).toEqual({ u: user.id, s: hash.toString("hex") });
       const after = (await one.query("SELECT coalesce(current_setting('vyra.user_id', true), '') AS u")).rows[0].u;
       expect(after).toBe("");
       // Une erreur dans la transaction ne laisse pas non plus de contexte.
-      await expect(withUser(one, { userId: "00000000-0000-4000-8000-000000000002", sessionHash: null }, async (c) => c.query("SELECT 1/0"))).rejects.toThrow();
+      await expect(withUser(one, { userId: user.id, sessionHash: hash }, async (cl) => cl.query("SELECT 1/0"))).rejects.toThrow(/division by zero/);
+      expect((await one.query("SELECT coalesce(current_setting('vyra.user_id', true), '') AS u")).rows[0].u).toBe("");
+      // Contexte non confirmé (autre utilisateur, sans session) : refusé avant toute requête de la route.
+      await expect(withUser(one, { userId: "00000000-0000-4000-8000-000000000002", sessionHash: null }, async (cl) => cl.query("SELECT 1"))).rejects.toThrow(/Session expirée/);
       expect((await one.query("SELECT coalesce(current_setting('vyra.user_id', true), '') AS u")).rows[0].u).toBe("");
     } finally {
       await one.end();

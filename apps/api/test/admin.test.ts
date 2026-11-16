@@ -5,6 +5,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import pg from "pg";
 import { base32Decode, hotp, timeStep } from "../src/lib/totp.js";
+import { tokenHash } from "../src/lib/crypto.js";
 import { Client, setup, signup, teardown, TEST_DB, type Ctx } from "./helpers.js";
 
 let ctx: Ctx;
@@ -37,6 +38,21 @@ async function admin(): Promise<Person> {
 }
 const level = async (id: string) => (await ctx.db.query("SELECT auth_level, mfa_via FROM sessions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1", [id])).rows[0];
 const isAdmin = async (id: string) => (await ctx.db.query("SELECT count(*)::int n FROM user_roles WHERE user_id = $1 AND role = 'admin'", [id])).rows[0].n === 1;
+/**
+ * Transaction vyra_app hors de l'API, dans le contexte vérifié d'une personne (sa vraie session, lot H5) : le
+ * même contexte que withUser, posé à la main pour piloter les validations simultanées.
+ */
+async function openAs(p: Person) {
+  const c = new pg.Client({ connectionString: TEST_DB });
+  await c.connect();
+  await c.query("SET ROLE vyra_app");
+  await c.query("SET search_path = vyra, public");
+  await c.query("BEGIN");
+  const hash = tokenHash(p.c.cookie.replace(/^vyra_session=/, "")).toString("hex");
+  await c.query("SELECT set_config('vyra.user_id', $1, true), set_config('vyra.session', $2, true)", [p.id, hash]);
+  expect((await c.query("SELECT vyra.ctx_user()::text u")).rows[0].u).toBe(p.id);
+  return c;
+}
 /** Retire tous les administrateurs (chaque test part d'un état connu), sans passer par la garde. */
 async function noAdmins() {
   await ctx.db.query("ALTER TABLE user_roles DISABLE TRIGGER user_roles_admin_guard_check");
@@ -153,18 +169,12 @@ describe("dernier administrateur (A-ADM-1, A-ADM-2, P-ADM-1)", () => {
   it("en base : deux transactions vyra_app qui retirent chacune l'autre administrateur et valident en même temps, une seule passe", async () => {
     const a = await admin();
     const b = await admin();
-    const open = async () => {
-      const c = new pg.Client({ connectionString: TEST_DB });
-      await c.connect();
-      await c.query("SET ROLE vyra_app");
-      await c.query("SET search_path = vyra, public");
-      await c.query("BEGIN");
-      return c;
-    };
-    const [c1, c2] = [await open(), await open()];
+    // Lot H5 : vyra_app ne retire plus un rôle directement ; il passe par vyra.admin_set_role, dans le contexte
+    // vérifié de chaque administrateur (TOTP récent). La garde de la base reste la dernière barrière.
+    const [c1, c2] = [await openAs(a), await openAs(b)];
     try {
-      await c1.query("DELETE FROM user_roles WHERE user_id = $1 AND role = 'admin'", [b.id]);
-      await c2.query("DELETE FROM user_roles WHERE user_id = $1 AND role = 'admin'", [a.id]);
+      await c1.query("SELECT vyra.admin_set_role($1, 'admin', false)", [b.id]);
+      await c2.query("SELECT vyra.admin_set_role($1, 'admin', false)", [a.id]);
       const results = await Promise.allSettled([c1.query("COMMIT"), c2.query("COMMIT")]);
       expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
       expect(String((results.find((r) => r.status === "rejected") as PromiseRejectedResult).reason)).toMatch(/last_admin/);
@@ -176,19 +186,25 @@ describe("dernier administrateur (A-ADM-1, A-ADM-2, P-ADM-1)", () => {
     await noAdmins();
   });
 
-  it("la base refuse un DELETE direct du dernier rôle admin par vyra_app, même hors de l'API", async () => {
+  it("la base refuse le retrait du dernier rôle admin hors de l'API : DELETE direct interdit à vyra_app, fonction et superutilisateur arrêtés à la validation", async () => {
     const a = await admin();
-    const one = new pg.Client({ connectionString: TEST_DB });
-    await one.connect();
+    // 1. vyra_app n'a plus le droit de supprimer un rôle (lot H5 : passage obligé par vyra.admin_set_role).
+    const one = await openAs(a);
     try {
-      await one.query("SET ROLE vyra_app");
-      await one.query("SET search_path = vyra, public");
-      await one.query("BEGIN");
-      await one.query("DELETE FROM user_roles WHERE role = 'admin'");
-      await expect(one.query("COMMIT")).rejects.toThrow(/last_admin/);
+      await expect(one.query("DELETE FROM user_roles WHERE role = 'admin'")).rejects.toThrow(/permission denied/);
     } finally {
       await one.end();
     }
+    // 2. Par la fonction, dans le contexte du dernier administrateur lui-même : refus à la validation.
+    const two = await openAs(a);
+    try {
+      expect((await two.query("SELECT vyra.admin_set_role($1, 'admin', false) r", [a.id])).rows[0].r).toEqual([]);
+      await expect(two.query("COMMIT")).rejects.toThrow(/last_admin/);
+    } finally {
+      await two.end();
+    }
+    // 3. Même un superutilisateur (hors RLS) est arrêté par le déclencheur.
+    await expect(ctx.db.query("DELETE FROM user_roles WHERE role = 'admin'")).rejects.toThrow(/last_admin/);
     expect(await isAdmin(a.id)).toBe(true);
     // La purge des comptes non confirmés (vyra_worker) n'est pas gênée par la garde.
     const w = await ctx.workerDb.query("DELETE FROM users WHERE email_verified_at IS NULL AND created_at < now() - interval '7 days'");

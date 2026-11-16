@@ -1,6 +1,9 @@
 // Administration du socle (lot H4) : rôles du personnel et récupération de la double authentification d'un
 // autre administrateur. Réservé aux administrateurs ayant saisi un code TOTP depuis moins de 15 minutes
 // (document 21 §1) ; tout est journalisé. Ces routes agissent sur vyra_app, dans le contexte de l'administrateur.
+// Lot H5 : sous RLS, vyra_app ne voit que les lignes de l'utilisateur du contexte ; les comptes des autres ne
+// sont lus et modifiés que par les fonctions vyra.admin_* (012), qui vérifient de nouveau, en base, le rôle et la
+// fraîcheur du TOTP, et ne renvoient jamais d'empreinte de mot de passe, de secret ni d'empreinte de session.
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { ROLES } from "@vyra/shared";
@@ -16,12 +19,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   app.get("/api/admin/users", async (req) => {
     app.requireStaff(req, "roles");
     const { email } = z.object({ email: z.email().transform((e) => e.toLowerCase()) }).parse(req.query);
-    const { rows } = await app.asUser(req).query(
-      `SELECT u.id, u.email, u.display_name, u.status, u.totp_enabled_at IS NOT NULL AS mfa,
-              COALESCE((SELECT array_agg(role ORDER BY role) FROM user_roles r WHERE r.user_id = u.id), '{}') AS roles
-         FROM users u WHERE u.email = $1`,
-      [email],
-    );
+    const { rows } = await app.asUser(req).query("SELECT id, email, display_name, status, mfa, roles FROM vyra.admin_find_user($1)", [email]);
     if (!rows[0]) throw notFound("user_not_found", "Aucun compte avec cette adresse.");
     const r = rows[0];
     return { user: { id: r.id, email: r.email, displayName: r.display_name, status: r.status, mfaEnabled: r.mfa, roles: r.roles } };
@@ -32,16 +30,10 @@ export default async function adminRoutes(app: FastifyInstance) {
     const { id } = z.object({ id: z.uuid() }).parse(req.params);
     const input = z.object({ role: z.enum(ROLES), grant: z.boolean() }).parse(req.body);
     const roles = await app.withUser(req, async (c) => {
-      const t = await c.query("SELECT id FROM users WHERE id = $1 AND status = 'active'", [id]);
-      if (!t.rows[0]) throw notFound("user_not_found", "Compte introuvable ou inactif.");
-      if (input.grant) {
-        await c.query("INSERT INTO user_roles (user_id, role, granted_by) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING", [id, input.role, actor.id]);
-      } else {
-        if (input.role === "admin") await assertNotLastAdmin(c, id);
-        await c.query("DELETE FROM user_roles WHERE user_id = $1 AND role = $2", [id, input.role]);
-      }
+      if (!input.grant && input.role === "admin") await assertNotLastAdmin(c, id);
+      const r = await c.query("SELECT vyra.admin_set_role($1, $2, $3) AS roles", [id, input.role, input.grant]);
+      if (r.rows[0].roles == null) throw notFound("user_not_found", "Compte introuvable ou inactif.");
       await audit(c, { actorId: actor.id, action: input.grant ? "admin.role_granted" : "admin.role_revoked", subject: `user:${id}`, ip: req.ip, details: { role: input.role } });
-      const r = await c.query("SELECT COALESCE(array_agg(role ORDER BY role), '{}') AS roles FROM user_roles WHERE user_id = $1", [id]);
       return r.rows[0].roles as string[];
     });
     return { roles };
@@ -55,14 +47,13 @@ export default async function adminRoutes(app: FastifyInstance) {
     const { id } = z.object({ id: z.uuid() }).parse(req.params);
     if (id === actor.id) throw badRequest("own_mfa_reset", "Pour votre propre compte, utilisez les réglages de sécurité.");
     await app.withUser(req, async (c) => {
-      const t = await c.query("SELECT id, email, display_name, locale, totp_enabled_at FROM users WHERE id = $1", [id]);
-      const u = t.rows[0];
-      if (!u) throw notFound("user_not_found", "Compte introuvable.");
-      if (!u.totp_enabled_at) throw badRequest("mfa_not_enabled", "La double authentification n'est pas activée sur ce compte.");
       await assertNotLastAdmin(c, id);
-      await c.query("UPDATE users SET totp_secret_enc = NULL, totp_pending_enc = NULL, totp_enabled_at = NULL, totp_last_step = NULL WHERE id = $1", [id]);
-      await c.query("DELETE FROM user_recovery_codes WHERE user_id = $1", [id]);
-      await c.query("DELETE FROM sessions WHERE user_id = $1", [id]);
+      // Facteurs effacés, codes de secours supprimés, sessions fermées : en une fois, par la fonction d'administration.
+      const { rows } = await c.query("SELECT status, email, display_name, locale FROM vyra.admin_reset_mfa($1)", [id]);
+      const u = rows[0];
+      if (u.status === "not_found") throw notFound("user_not_found", "Compte introuvable.");
+      if (u.status === "not_enabled") throw badRequest("mfa_not_enabled", "La double authentification n'est pas activée sur ce compte.");
+      if (u.status === "self") throw badRequest("own_mfa_reset", "Pour votre propre compte, utilisez les réglages de sécurité.");
       await audit(c, { actorId: actor.id, action: "admin.mfa_reset", subject: `user:${id}`, ip: req.ip });
       await queueSecurityAlert(c, app.cfg, { id, email: u.email, displayName: u.display_name, locale: u.locale }, "2fa_reset_by_admin");
     });

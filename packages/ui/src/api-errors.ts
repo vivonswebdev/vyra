@@ -10,6 +10,8 @@ export const API_ERRORS: Record<string, T4> = {
   // Catégories générales
   unauthorized: ["Connexion requise.", "Aanmelding vereist.", "Please sign in.", "يلزم تسجيل الدخول."],
   forbidden: ["Accès refusé.", "Toegang geweigerd.", "Access denied.", "تم رفض الوصول."],
+  // Socle H5 : session révoquée, expirée ou compte suspendu pendant la requête
+  session_expired: ["Votre session a expiré ou a été fermée. Reconnectez-vous.", "Je sessie is verlopen of beëindigd. Meld je opnieuw aan.", "Your session has expired or was closed. Please sign in again.", "انتهت جلستك أو أُغلقت. سجّل الدخول من جديد."],
   // Socle H4 : personnel, niveau de confiance, dernier administrateur
   role_required: ["Opération réservée au personnel habilité.", "Alleen voor bevoegd personeel.", "Reserved for authorised staff.", "عملية مخصصة للموظفين المخوّلين."],
   mfa_not_enabled: ["Activez d'abord la double authentification sur votre compte.", "Schakel eerst tweestapsverificatie in voor je account.", "Turn on two-factor authentication on your account first.", "فعّل أولًا المصادقة الثنائية على حسابك."],

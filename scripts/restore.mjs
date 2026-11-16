@@ -21,7 +21,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import pg from "pg";
-import { compare, snapshot, userObjects } from "./db-control.mjs";
+import { compare, quoteName, snapshot, tableContents, userObjects } from "./db-control.mjs";
 
 const url = process.env.RESTORE_DATABASE_URL;
 const storage = process.env.STORAGE_DIR;
@@ -98,11 +98,20 @@ try {
   fs.rmSync(path.dirname(listFile), { recursive: true, force: true });
 }
 
-// Contrôle, en lecture seule sous le rôle propriétaire.
-await q("BEGIN READ ONLY");
-await q("SET LOCAL ROLE vyra_owner");
-const diffs = compare(expected, await snapshot(q));
-await q("COMMIT");
+// Contrôle sous le rôle propriétaire, dans une transaction toujours ANNULÉE. Lot H5 : les tables à RLS forcée
+// filtrent aussi leur propriétaire ; la structure (dont l'état « forcé ») est relevée d'abord, puis le forçage
+// est levé le temps du comptage seulement (verrou exclusif tenu), et l'annulation le rétablit.
+await q("BEGIN");
+let actual;
+try {
+  await q("SET LOCAL ROLE vyra_owner");
+  actual = await snapshot(q, { contents: false });
+  for (const r of actual.relations.filter((x) => x.kind === "r" && x.force_rls)) await q(`ALTER TABLE ${quoteName(r.name)} NO FORCE ROW LEVEL SECURITY`);
+  actual.tables = await tableContents(q, actual.relations);
+} finally {
+  await q("ROLLBACK");
+}
+const diffs = compare(expected, actual);
 await db.end();
 if (diffs.length) {
   console.error(`Contrôle après restauration : ${diffs.length} différence(s). NE PAS basculer l'API sur cette base.`);
