@@ -9,6 +9,10 @@ const Env = z.object({
   PORT: z.coerce.number().int().default(8787),
   HOST: z.string().default("127.0.0.1"),
   DATABASE_URL: z.string().default("postgres://vyra:vyra@127.0.0.1:5432/vyra_dev"),
+  /** Lot H3 : connexion de l'authentification (rôle vyra_system) ; à défaut, hors production, DATABASE_URL. */
+  SYSTEM_DATABASE_URL: z.string().optional(),
+  /** Lot H3 : connexion des tâches de fond, de la santé et des métriques (rôle vyra_worker) ; idem. */
+  WORKER_DATABASE_URL: z.string().optional(),
   /** Migrations (lot H1) : connexion du migrateur, lue seulement par la commande de migration, jamais par le serveur. */
   MIGRATION_DATABASE_URL: z.string().optional(),
   /** Rôle pris pendant chaque migration (`SET LOCAL ROLE`), pour que les objets appartiennent au propriétaire. */
@@ -92,6 +96,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
       problems.push("STORAGE_DRIVER=s3 exige S3_BUCKET, S3_ACCESS_KEY_ID et S3_SECRET_ACCESS_KEY.");
     if (cfg.FILE_SCAN !== "clamd") problems.push("FILE_SCAN=clamd est obligatoire en production (quarantaine et analyse antivirus des fichiers déposés).");
     if (cfg.RATE_LIMIT_STORE === "memory") problems.push("RATE_LIMIT_STORE=memory est refusé en production (compteurs non partagés entre instances).");
+    if (!cfg.SYSTEM_DATABASE_URL || !cfg.WORKER_DATABASE_URL)
+      problems.push("SYSTEM_DATABASE_URL (rôle vyra_system) et WORKER_DATABASE_URL (rôle vyra_worker) sont requis en production, en plus de DATABASE_URL (vyra_app).");
     if (cfg.DEV_MAILBOX) problems.push("DEV_MAILBOX est interdit en production (il expose les liens de connexion).");
     if (problems.length) throw new Error("Configuration de production refusée :\n- " + problems.join("\n- "));
   }

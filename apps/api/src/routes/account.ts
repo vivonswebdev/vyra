@@ -4,7 +4,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import crypto from "node:crypto";
 import QRCode from "qrcode";
 import { z } from "zod";
-import { tx, type Queryable } from "../db/pool.js";
+import { type Queryable } from "../db/pool.js";
 import { tokenHash, verifyPassword } from "../lib/crypto.js";
 import { badRequest, HttpError, notFound } from "../lib/errors.js";
 import { audit } from "../lib/audit.js";
@@ -59,15 +59,18 @@ export async function checkSecondFactor(q: Queryable, box: SecretBox, userId: st
   return false;
 }
 
+// Lot H3 : toutes ces routes agissent pour l'utilisateur connecté, sur le pool vyra_app et dans son contexte
+// (app.asUser pour une requête isolée, app.withUser pour une transaction).
 export default async function accountRoutes(app: FastifyInstance) {
-  const { db, cfg } = app;
+  const { cfg } = app;
   const box = new SecretBox(cfg.secretKey);
   const strict = { config: { rateLimit: { max: cfg.AUTH_RATE_LIMIT, timeWindow: "1 minute" } } };
 
   async function requirePassword(req: FastifyRequest, userId: string, password: string) {
-    const { rows } = await db.query("SELECT password_hash FROM users WHERE id = $1", [userId]);
+    const q = app.asUser(req);
+    const { rows } = await q.query("SELECT password_hash FROM users WHERE id = $1", [userId]);
     if (!(await verifyPassword(password, rows[0].password_hash))) {
-      await audit(db, { actorId: userId, action: "account.reauth_failed", subject: `user:${userId}`, ip: req.ip });
+      await audit(q, { actorId: userId, action: "account.reauth_failed", subject: `user:${userId}`, ip: req.ip });
       throw badRequest("wrong_password", "Mot de passe incorrect.");
     }
   }
@@ -76,7 +79,7 @@ export default async function accountRoutes(app: FastifyInstance) {
 
   app.get("/api/me/sessions", async (req) => {
     const u = app.requireUser(req);
-    const { rows } = await db.query(
+    const { rows } = await app.asUser(req).query(
       `SELECT id, created_at, last_seen_at, expires_at, ip, user_agent, token_hash = $2 AS current
          FROM sessions WHERE user_id = $1 AND expires_at > now() ORDER BY last_seen_at DESC`,
       [u.id, req.sessionHash],
@@ -97,17 +100,22 @@ export default async function accountRoutes(app: FastifyInstance) {
   app.delete("/api/me/sessions/:id", async (req, reply) => {
     const u = app.requireUser(req);
     const { id } = z.object({ id: z.uuid() }).parse(req.params);
-    const { rows } = await db.query("DELETE FROM sessions WHERE id = $1 AND user_id = $2 RETURNING token_hash = $3 AS current", [id, u.id, req.sessionHash]);
-    if (!rows[0]) throw notFound("session_not_found", "Session introuvable.");
-    await audit(db, { actorId: u.id, action: "account.session_revoked", subject: `user:${u.id}`, ip: req.ip, details: { session: id } });
+    // Journal d'abord, suppression en dernier : la session révoquée peut être la session courante.
+    const rows = await app.withUser(req, async (c) => {
+      const found = await c.query("SELECT token_hash = $3 AS current FROM sessions WHERE id = $1 AND user_id = $2", [id, u.id, req.sessionHash]);
+      if (!found.rows[0]) throw notFound("session_not_found", "Session introuvable.");
+      await audit(c, { actorId: u.id, action: "account.session_revoked", subject: `user:${u.id}`, ip: req.ip, details: { session: id } });
+      await c.query("DELETE FROM sessions WHERE id = $1 AND user_id = $2", [id, u.id]);
+      return found.rows;
+    });
     if (rows[0].current) reply.clearCookie(sessionCookieName(cfg.secureCookies), { path: "/", secure: cfg.secureCookies });
     return { ok: true, current: rows[0].current };
   });
 
   app.post("/api/me/sessions/revoke-others", async (req) => {
     const u = app.requireUser(req);
-    const r = await db.query("DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2", [u.id, req.sessionHash]);
-    await audit(db, { actorId: u.id, action: "account.sessions_revoked", subject: `user:${u.id}`, ip: req.ip, details: { count: r.rowCount } });
+    const r = await app.asUser(req).query("DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2", [u.id, req.sessionHash]);
+    await audit(app.asUser(req), { actorId: u.id, action: "account.sessions_revoked", subject: `user:${u.id}`, ip: req.ip, details: { count: r.rowCount } });
     return { revoked: r.rowCount };
   });
 
@@ -115,7 +123,7 @@ export default async function accountRoutes(app: FastifyInstance) {
 
   app.get("/api/me/2fa", async (req) => {
     const u = app.requireUser(req);
-    const { rows } = await db.query(
+    const { rows } = await app.asUser(req).query(
       `SELECT totp_enabled_at, (SELECT count(*)::int FROM user_recovery_codes WHERE user_id = $1 AND used_at IS NULL) AS remaining
          FROM users WHERE id = $1`,
       [u.id],
@@ -128,7 +136,7 @@ export default async function accountRoutes(app: FastifyInstance) {
     const { password } = z.object({ password: z.string().min(1).max(200) }).parse(req.body);
     await requirePassword(req, u.id, password);
     const secret = newTotpSecret();
-    await db.query("UPDATE users SET totp_pending_enc = $2 WHERE id = $1", [u.id, box.seal(secret)]);
+    await app.asUser(req).query("UPDATE users SET totp_pending_enc = $2 WHERE id = $1", [u.id, box.seal(secret)]);
     const uri = otpauthUri(secret, u.email);
     return { secret, otpauthUri: uri, qrSvg: await QRCode.toString(uri, { type: "svg", margin: 1, errorCorrectionLevel: "M" }) };
   });
@@ -136,7 +144,7 @@ export default async function accountRoutes(app: FastifyInstance) {
   app.post("/api/me/2fa/enable", strict, async (req) => {
     const u = app.requireUser(req);
     const { code } = z.object({ code: Code }).parse(req.body);
-    const codes = await tx(db, async (c) => {
+    const codes = await app.withUser(req, async (c) => {
       const { rows } = await c.query("SELECT totp_pending_enc, totp_enabled_at FROM users WHERE id = $1 FOR UPDATE", [u.id]);
       if (rows[0].totp_enabled_at) throw badRequest("mfa_already_enabled", "La double authentification est déjà active.");
       if (!rows[0].totp_pending_enc) throw badRequest("mfa_setup_first", "Commencez par la configuration (scanner le code).");
@@ -163,9 +171,9 @@ export default async function accountRoutes(app: FastifyInstance) {
     const u = app.requireUser(req);
     const input = z.object({ password: z.string().min(1).max(200), code: Code }).parse(req.body);
     await requirePassword(req, u.id, input.password);
-    if (!(await checkSecondFactor(db, box, u.id, { code: input.code }))) throw badRequest("wrong_code", "Code incorrect.");
+    if (!(await checkSecondFactor(app.asUser(req), box, u.id, { code: input.code }))) throw badRequest("wrong_code", "Code incorrect.");
     const rc = newRecoveryCodes();
-    await tx(db, async (c) => {
+    await app.withUser(req, async (c) => {
       await c.query("DELETE FROM user_recovery_codes WHERE user_id = $1", [u.id]);
       for (const h of rc.hashes) await c.query("INSERT INTO user_recovery_codes (user_id, code_hash) VALUES ($1, $2)", [u.id, h]);
       await audit(c, { actorId: u.id, action: "account.2fa_recovery_regenerated", subject: `user:${u.id}`, ip: req.ip });
@@ -177,8 +185,8 @@ export default async function accountRoutes(app: FastifyInstance) {
     const u = app.requireUser(req);
     const input = z.object({ password: z.string().min(1).max(200), code: Code.optional(), recoveryCode: RecoveryCode.optional() }).parse(req.body);
     await requirePassword(req, u.id, input.password);
-    if (!(await checkSecondFactor(db, box, u.id, input))) throw badRequest("wrong_code", "Code incorrect.");
-    await tx(db, async (c) => {
+    if (!(await checkSecondFactor(app.asUser(req), box, u.id, input))) throw badRequest("wrong_code", "Code incorrect.");
+    await app.withUser(req, async (c) => {
       await c.query("UPDATE users SET totp_secret_enc = NULL, totp_pending_enc = NULL, totp_enabled_at = NULL, totp_last_step = NULL WHERE id = $1", [u.id]);
       await c.query("DELETE FROM user_recovery_codes WHERE user_id = $1", [u.id]);
       await audit(c, { actorId: u.id, action: "account.2fa_disabled", subject: `user:${u.id}`, ip: req.ip });
@@ -191,20 +199,20 @@ export default async function accountRoutes(app: FastifyInstance) {
 
   app.get("/api/me/export", { config: { rateLimit: { max: 5, timeWindow: "1 hour" } } }, async (req, reply) => {
     const u = app.requireUser(req);
-    const { rows: [user] } = await db.query(
+    const { rows: [user] } = await app.asUser(req).query(
       "SELECT id, email, display_name, email_verified_at, locale, theme, preferences, status, created_at, updated_at, totp_enabled_at FROM users WHERE id = $1",
       [u.id],
     );
-    const sessions = (await db.query("SELECT created_at, last_seen_at, expires_at, ip, user_agent FROM sessions WHERE user_id = $1", [u.id])).rows;
-    const auditRows = (await db.query("SELECT at, action, subject, ip, details FROM audit_log WHERE actor_id = $1 ORDER BY at", [u.id])).rows;
-    const projects = (await db.query("SELECT id, name, design, settings, revision, created_at, updated_at, deleted_at FROM projects WHERE owner_id = $1 ORDER BY created_at", [u.id])).rows;
-    const versions = (await db.query(
+    const sessions = (await app.asUser(req).query("SELECT created_at, last_seen_at, expires_at, ip, user_agent FROM sessions WHERE user_id = $1", [u.id])).rows;
+    const auditRows = (await app.asUser(req).query("SELECT at, action, subject, ip, details FROM audit_log WHERE actor_id = $1 ORDER BY at", [u.id])).rows;
+    const projects = (await app.asUser(req).query("SELECT id, name, design, settings, revision, created_at, updated_at, deleted_at FROM projects WHERE owner_id = $1 ORDER BY created_at", [u.id])).rows;
+    const versions = (await app.asUser(req).query(
       "SELECT v.project_id, v.revision, v.label, v.name, v.design, v.settings, v.created_at FROM project_versions v JOIN projects p ON p.id = v.project_id WHERE p.owner_id = $1 ORDER BY v.id",
       [u.id],
     )).rows;
-    const charts = (await db.query("SELECT brand, product, status, source, source_url, entries, created_at FROM thread_charts WHERE owner_id = $1", [u.id])).rows;
+    const charts = (await app.asUser(req).query("SELECT brand, product, status, source, source_url, entries, created_at FROM thread_charts WHERE owner_id = $1", [u.id])).rows;
     // Les fichiers en quarantaine (non analysés ou en erreur d'analyse) ne sont jamais servis, export compris.
-    const files = (await db.query(
+    const files = (await app.asUser(req).query(
       "SELECT id, kind, storage_key, filename, mime, size_bytes, sha256, created_at FROM files WHERE owner_id = $1 AND deleted_at IS NULL AND scan_status = ANY($2) ORDER BY created_at",
       [u.id, servableStates(app)],
     )).rows;
@@ -238,7 +246,7 @@ export default async function accountRoutes(app: FastifyInstance) {
         entries.push({ name: `fichiers/MANQUANT-${f.id}.txt`, data: `Le fichier ${f.filename} (${f.sha256}) est introuvable dans le stockage.` });
       }
     }
-    await audit(db, { actorId: u.id, action: "account.data_exported", subject: `user:${u.id}`, ip: req.ip, details: { projects: projects.length, files: files.length } });
+    await audit(app.asUser(req), { actorId: u.id, action: "account.data_exported", subject: `user:${u.id}`, ip: req.ip, details: { projects: projects.length, files: files.length } });
     const archive = zip(entries);
     return reply
       .header("content-type", "application/zip")
@@ -260,17 +268,19 @@ export default async function accountRoutes(app: FastifyInstance) {
       })
       .parse(req.body);
     await requirePassword(req, u.id, input.password);
-    if (!(await checkSecondFactor(db, box, u.id, input))) throw new HttpError(400, "mfa_required", "Code de double authentification requis ou incorrect.");
-    const keys = await tx(db, async (c) => {
+    if (!(await checkSecondFactor(app.asUser(req), box, u.id, input))) throw new HttpError(400, "mfa_required", "Code de double authentification requis ou incorrect.");
+    const keys = await app.withUser(req, async (c) => {
       const { rows } = await c.query("SELECT storage_key FROM files WHERE owner_id = $1", [u.id]);
       // Les e-mails en file contiennent des liens personnels : supprimés avec le compte.
       await c.query("DELETE FROM email_outbox WHERE to_email = $1", [u.email]);
       // Le journal d'audit conserve la trace anonyme des actions (actor_id passe à NULL par la clé étrangère).
       await c.query("UPDATE audit_log SET ip = NULL, details = '{}'::jsonb WHERE actor_id = $1", [u.id]);
-      await c.query("DELETE FROM users WHERE id = $1", [u.id]);
-      await audit(c, { action: "account.deleted", subject: `user:${u.id}`, details: { files: rows.length } });
-      // Confirmation à l'adresse du compte supprimé (seule donnée conservée : cet e-mail en file, sans lien personnel).
+      // Trace de la suppression et confirmation, écrites AVANT la suppression du compte : sous RLS (lot H5), la
+      // transaction perd son contexte dès que le compte (et donc sa session) disparaît. actor_id passe à NULL
+      // par la clé étrangère ; l'adresse ne reste que dans cet e-mail de confirmation, sans lien personnel.
+      await audit(c, { actorId: u.id, action: "account.deleted", subject: `user:${u.id}`, details: { files: rows.length } });
       await queueSecurityAlert(c, cfg, u, "account_deleted");
+      await c.query("DELETE FROM users WHERE id = $1", [u.id]);
       return rows.map((r) => r.storage_key as string);
     });
     let removed = 0;

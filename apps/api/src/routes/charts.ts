@@ -49,11 +49,11 @@ export function chartReason(m: string): { reason: string; params?: Record<string
 }
 
 export default async function chartRoutes(app: FastifyInstance) {
-  const { db } = app;
+  // Lot H3 : chaque requête est faite pour l'utilisateur connecté, sur vyra_app et dans son contexte.
 
   app.get("/api/thread-charts", async (req) => {
     const u = app.requireUser(req);
-    const { rows } = await db.query("SELECT * FROM thread_charts WHERE owner_id = $1 ORDER BY created_at DESC LIMIT 100", [u.id]);
+    const { rows } = await app.asUser(req).query("SELECT * FROM thread_charts WHERE owner_id = $1 ORDER BY created_at DESC LIMIT 100", [u.id]);
     return { charts: rows.map(dto) };
   });
 
@@ -74,7 +74,7 @@ export default async function chartRoutes(app: FastifyInstance) {
     }
     if (chart.entries.length > 5000) throw badRequest("chart_too_many", "5 000 couleurs au plus par nuancier.");
     const entries = chart.entries.map((e: any) => ({ code: String(e.code).slice(0, 60), name: String(e.name ?? "").slice(0, 120), rgb: e.rgb }));
-    const { rows } = await db.query(
+    const { rows } = await app.asUser(req).query(
       "INSERT INTO thread_charts (owner_id, brand, product, status, source, source_url, entries) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *",
       [u.id, input.brand, input.product, input.status, input.source, input.sourceUrl ?? null, JSON.stringify(entries)],
     );
@@ -85,7 +85,7 @@ export default async function chartRoutes(app: FastifyInstance) {
   app.delete("/api/thread-charts/:id", async (req) => {
     const u = app.requireUser(req);
     const { id } = z.object({ id: z.uuid() }).parse(req.params);
-    const r = await db.query("DELETE FROM thread_charts WHERE id = $1 AND owner_id = $2", [id, u.id]);
+    const r = await app.asUser(req).query("DELETE FROM thread_charts WHERE id = $1 AND owner_id = $2", [id, u.id]);
     if (!r.rowCount) throw notFound("chart_not_found", "Nuancier introuvable.");
     return { ok: true };
   });

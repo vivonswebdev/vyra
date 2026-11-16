@@ -8,6 +8,8 @@ const prod = {
   MAIL_TRANSPORT: "brevo",
   BREVO_API_KEY: "cle-brevo",
   DATABASE_URL: "postgres://u:p@db/vyra",
+  SYSTEM_DATABASE_URL: "postgres://s:p@db/vyra",
+  WORKER_DATABASE_URL: "postgres://w:p@db/vyra",
   FILE_SCAN: "clamd",
 } as unknown as NodeJS.ProcessEnv;
 
@@ -31,6 +33,8 @@ describe("configuration de production", () => {
     [{ STORAGE_DRIVER: "s3" }, /S3_BUCKET/],
     [{ FILE_SCAN: "off" }, /FILE_SCAN=clamd/],
     [{ RATE_LIMIT_STORE: "memory" }, /RATE_LIMIT_STORE/],
+    [{ SYSTEM_DATABASE_URL: undefined }, /SYSTEM_DATABASE_URL/],
+    [{ WORKER_DATABASE_URL: undefined }, /WORKER_DATABASE_URL/],
   ])("refuse une configuration dangereuse : %o", (override, msg) => {
     expect(() => loadConfig({ ...prod, ...override } as any)).toThrow(msg);
   });

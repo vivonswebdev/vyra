@@ -32,7 +32,7 @@ const LOGIN = ROLES.filter((r) => r !== "vyra_owner");
 const RUNTIME = ["vyra_app", "vyra_system", "vyra_worker", "vyra_market"];
 const SOCLE = ["users", "user_roles", "sessions", "auth_tokens", "email_outbox", "files", "audit_log", "projects", "project_versions", "project_exports",
   "project_files", "user_recovery_codes", "mfa_challenges", "thread_charts", "auth_throttle", "rate_limits", "schema_migrations"].sort();
-const H2_FILES = ["007_core_user_roles_fk.sql", "008_core_schema_vyra.sql", "009_core_privileges.sql"];
+const H2_FILES = FILES.filter((f) => f > "006"); // migrations du socle postérieures à H1 (007 et suivantes)
 const pw: Record<string, string> = Object.fromEntries(LOGIN.map((r) => [r, crypto.randomBytes(16).toString("hex")]));
 const u = new URL(TEST_DB);
 const urlAs = (role: string, db: string, password = pw[role]) => `postgres://${role}:${password}@${u.host}/${db}`;
@@ -318,16 +318,19 @@ describe.runIf(ENABLED)("rôles PostgreSQL et schéma vyra (instance locale isol
   });
 
   it("l'API fonctionne avec vyra_app (connexion réelle par mot de passe), sans privilège de migration", async () => {
+    // Lot H3 : un pool par rôle, chacun connecté avec son propre mot de passe.
     const appPool = createPool(urlAs("vyra_app", db));
+    const sysPool = createPool(urlAs("vyra_system", db));
+    const workerPool = createPool(urlAs("vyra_worker", db));
     const storageDir = fs.mkdtempSync(path.join(os.tmpdir(), "vyra-roles-"));
     tmpDirs.push(storageDir);
     const cfg = loadConfig({ NODE_ENV: "test" } as any, { DATABASE_URL: urlAs("vyra_app", db), STORAGE_DIR: storageDir, LOG_LEVEL: "silent", PUBLIC_URL: "http://vyra.test", AUTH_RATE_LIMIT: 10_000 } as any);
-    const app = await buildApp({ cfg, db: appPool });
+    const app = await buildApp({ cfg, db: appPool, sys: sysPool, worker: workerPool });
     try {
       expect(await migrationStatus(appPool)).toEqual({ applied: FILES, pending: [], modified: [], orphans: [] });
       const c = new Client(app);
       expect((await c.post("/api/auth/signup", { email: "role@example.com", password: "un-mot-de-passe-solide", displayName: "Rôle", acceptTerms: true })).status).toBe(202);
-      const { rows: m } = await appPool.query("SELECT body_text FROM email_outbox WHERE to_email = 'role@example.com' AND template = 'verify'");
+      const { rows: m } = await workerPool.query("SELECT body_text FROM email_outbox WHERE to_email = 'role@example.com' AND template = 'verify'");
       expect((await c.post("/api/auth/verify-email", { token: tokenFrom(m[0].body_text) })).status).toBe(200);
       expect((await c.post("/api/projects", { name: "Essai rôles", design: null })).status).toBe(201);
       expect((await c.get("/api/projects")).json.projects.map((x: any) => x.name)).toEqual(["Essai rôles"]);
@@ -336,7 +339,7 @@ describe.runIf(ENABLED)("rôles PostgreSQL et schéma vyra (instance locale isol
       expect(ready.json().checks.migrations).toMatchObject({ ok: true });
     } finally {
       await app.close();
-      await appPool.end();
+      await Promise.all([appPool.end(), sysPool.end(), workerPool.end()]);
     }
   });
 

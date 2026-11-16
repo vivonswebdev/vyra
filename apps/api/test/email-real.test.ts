@@ -26,7 +26,7 @@ describe.runIf(!!SMTP && !!API)("e-mails réels par SMTP (Mailpit)", () => {
     }
     return out;
   };
-  const flush = () => flushOutbox(ctx.appDb, cfg, createSender(cfg));
+  const flush = () => flushOutbox(ctx.workerDb, cfg, createSender(cfg));
   const fullSignup = async (email: string) => {
     const c = new Client(app);
     await c.post("/api/auth/signup", { email, password: PW, displayName: "Atelier", acceptTerms: true, locale: "fr" });
@@ -42,7 +42,7 @@ describe.runIf(!!SMTP && !!API)("e-mails réels par SMTP (Mailpit)", () => {
       DATABASE_URL: "unused", STORAGE_DIR: ctx.storageDir, LOG_LEVEL: "silent", PUBLIC_URL: "http://vyra.test",
       AUTH_RATE_LIMIT: 10_000, MAIL_TRANSPORT: "smtp", SMTP_URL: SMTP, MAIL_FROM: "VYRA Test <no-reply@vyra.test>",
     } as any);
-    app = await buildApp({ cfg, db: ctx.appDb });
+    app = await buildApp({ cfg, ...ctx.pools });
   });
   beforeEach(async () => {
     await fetch(`${API}/api/v1/messages`, { method: "DELETE" });
@@ -123,7 +123,7 @@ describe.runIf(!!SMTP && !!API)("e-mails réels par SMTP (Mailpit)", () => {
   it("panne SMTP : message conservé, erreur notée, nouvel essai différé puis livré une seule fois", async () => {
     await new Client(app).post("/api/auth/forgot-password", { email: "verif@example.com" });
     const broken = createSender({ ...cfg, SMTP_URL: "smtp://127.0.0.1:1" } as any);
-    expect(await flushOutbox(ctx.appDb, cfg, broken)).toBe(0);
+    expect(await flushOutbox(ctx.workerDb, cfg, broken)).toBe(0);
     const { rows } = await ctx.db.query("SELECT id, attempts, last_error, sent_at, claimed_until > now() AS delayed FROM email_outbox WHERE sent_at IS NULL ORDER BY id DESC LIMIT 1");
     expect(rows[0]).toMatchObject({ attempts: 1, sent_at: null, delayed: true });
     expect(rows[0].last_error).toMatch(/ECONNREFUSED|connect/i);
@@ -139,7 +139,7 @@ describe.runIf(!!SMTP && !!API)("e-mails réels par SMTP (Mailpit)", () => {
     const broken = createSender({ ...cfg, SMTP_URL: "smtp://127.0.0.1:1" } as any);
     for (let i = 0; i < 6; i++) {
       await ctx.db.query("UPDATE email_outbox SET claimed_until = NULL WHERE sent_at IS NULL");
-      await flushOutbox(ctx.appDb, cfg, broken);
+      await flushOutbox(ctx.workerDb, cfg, broken);
     }
     const { rows } = await ctx.db.query("SELECT attempts FROM email_outbox WHERE sent_at IS NULL ORDER BY id DESC LIMIT 1");
     expect(rows[0].attempts).toBe(5);

@@ -9,7 +9,8 @@ import { migrationStatus } from "../db/migrations.js";
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), path.basename(path.dirname(fileURLToPath(import.meta.url))) === "routes" ? "../db/migrations" : "migrations");
 
 export default async function opsRoutes(app: FastifyInstance) {
-  const { db, cfg } = app;
+  // Lot H3 : santé et métriques lues par vyra_worker (aucune donnée d'utilisateur, aucun droit d'écriture utile).
+  const { worker: db, cfg } = app;
   const started = Date.now();
   const counters = { requests: new Map<string, number>(), durationSum: 0, durationCount: 0 };
 

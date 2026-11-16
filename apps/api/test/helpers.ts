@@ -19,6 +19,11 @@ export interface Ctx {
   db: Db;
   /** Connexion de l'application testée : rôle vyra_app (SET ROLE), avec ses seuls droits. */
   appDb: Db;
+  /** Lot H3 : connexions vyra_system et vyra_worker de l'application testée. */
+  sysDb: Db;
+  workerDb: Db;
+  /** Les trois connexions, à passer telles quelles à buildApp. */
+  pools: { db: Db; sys: Db; worker: Db };
   storageDir: string;
 }
 
@@ -71,6 +76,9 @@ export async function setup(overrides: Record<string, unknown> = {}): Promise<Ct
     await mig.end();
   }
   const appDb = appPool();
+  const sysDb = appPool(TEST_DB, "vyra_system");
+  const workerDb = appPool(TEST_DB, "vyra_worker");
+  const pools = { db: appDb, sys: sysDb, worker: workerDb };
   const storageDir = fs.mkdtempSync(path.join(os.tmpdir(), "vyra-test-storage-"));
   const cfg = loadConfig({ NODE_ENV: "test" } as any, {
     DATABASE_URL: TEST_DB,
@@ -80,14 +88,14 @@ export async function setup(overrides: Record<string, unknown> = {}): Promise<Ct
     AUTH_RATE_LIMIT: 10_000,
     ...overrides,
   } as any);
-  const app = await buildApp({ cfg, db: appDb });
+  const app = await buildApp({ cfg, ...pools });
   await app.ready();
-  return { app, db, appDb, storageDir };
+  return { app, db, appDb, sysDb, workerDb, pools, storageDir };
 }
 
 export async function teardown(ctx: Ctx) {
   await ctx.app.close();
-  await ctx.appDb.end();
+  await Promise.all([ctx.appDb.end(), ctx.sysDb.end(), ctx.workerDb.end()]);
   await ctx.db.end();
   fs.rmSync(ctx.storageDir, { recursive: true, force: true });
 }
@@ -123,7 +131,7 @@ export async function signup(app: FastifyInstance, email = `u${Math.random().toS
   const c = new Client(app);
   const r = await c.post("/api/auth/signup", { email, password: "un-mot-de-passe-solide", displayName: "Testeur", acceptTerms: true });
   if (r.status !== 202) throw new Error("signup " + r.status + " " + JSON.stringify(r.json));
-  const db = (app as any).db as Db;
+  const db = (app as any).worker as Db; // lecture de la file d'e-mails : vyra_worker (lot H3)
   const { rows } = await db.query("SELECT body_text FROM email_outbox WHERE to_email = $1 AND template = 'verify' ORDER BY id DESC LIMIT 1", [email]);
   const v = await c.post("/api/auth/verify-email", { token: tokenFrom(rows[0].body_text) });
   if (v.status !== 200 || !v.json.user) throw new Error("verify " + v.status + " " + JSON.stringify(v.json));

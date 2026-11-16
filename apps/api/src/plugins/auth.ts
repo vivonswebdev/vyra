@@ -2,7 +2,7 @@
 // ne connaît que son empreinte. Une session expirée ou un compte suspendu = déconnecté.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
-import type { Db, Queryable } from "../db/pool.js";
+import { userQueryable, withUser, type Db, type Queryable, type Tx } from "../db/pool.js";
 import type { Config } from "../config.js";
 import { newToken, tokenHash } from "../lib/crypto.js";
 import { forbidden, unauthorized } from "../lib/errors.js";
@@ -34,8 +34,13 @@ declare module "fastify" {
     cfg: Config;
     requireUser: (req: FastifyRequest) => SessionUser;
     requireRole: (req: FastifyRequest, role: Role) => SessionUser;
-    startSession: (reply: FastifyReply, req: FastifyRequest, userId: string, q?: Queryable) => Promise<void>;
+    /** Ouvre une session ; renvoie l'empreinte du jeton (le jeton brut ne quitte que par le cookie). */
+    startSession: (reply: FastifyReply, req: FastifyRequest, userId: string, q?: Queryable) => Promise<Buffer>;
     endSession: (reply: FastifyReply, req: FastifyRequest) => Promise<void>;
+    /** Transaction sur le pool vyra_app avec le contexte de l'utilisateur connecté (lot H3). */
+    withUser: <T>(req: FastifyRequest, fn: (client: Tx) => Promise<T>) => Promise<T>;
+    /** Requêtes isolées sur le pool vyra_app, chacune avec le contexte de l'utilisateur connecté. */
+    asUser: (req: FastifyRequest) => Queryable;
   }
 }
 
@@ -57,7 +62,9 @@ export function toSessionUser(r: Record<string, any>): SessionUser {
 }
 
 export default fp(async function authPlugin(app: FastifyInstance) {
-  const { db, cfg } = app;
+  // Lot H3 : la recherche de session et la création de session passent par vyra_system (aucun utilisateur
+  // n'est encore établi) ; ce qui est fait pour l'utilisateur connecté passe par vyra_app, dans son contexte.
+  const { sys, cfg } = app;
   const maxAge = cfg.SESSION_DAYS * 24 * 3600;
   const COOKIE = sessionCookieName(cfg.secureCookies);
 
@@ -68,7 +75,7 @@ export default fp(async function authPlugin(app: FastifyInstance) {
     const token = req.cookies[COOKIE];
     if (!token || token.length > 200) return;
     const hash = tokenHash(token);
-    const { rows } = await db.query(
+    const { rows } = await sys.query(
       `SELECT ${USER_COLUMNS}, s.last_seen_at FROM sessions s JOIN users u ON u.id = s.user_id
         WHERE s.token_hash = $1 AND s.expires_at > now() AND u.status = 'active'`,
       [hash],
@@ -78,7 +85,7 @@ export default fp(async function authPlugin(app: FastifyInstance) {
     req.sessionHash = hash;
     // Session glissante, mise à jour au plus une fois par heure.
     if (Date.now() - new Date(rows[0].last_seen_at).getTime() > 3600_000) {
-      await db.query(
+      await sys.query(
         "UPDATE sessions SET last_seen_at = now(), expires_at = now() + make_interval(days => $2) WHERE token_hash = $1",
         [hash, cfg.SESSION_DAYS],
       );
@@ -96,7 +103,7 @@ export default fp(async function authPlugin(app: FastifyInstance) {
     return u;
   });
 
-  app.decorate("startSession", async (reply: FastifyReply, req: FastifyRequest, userId: string, q: Queryable = db) => {
+  app.decorate("startSession", async (reply: FastifyReply, req: FastifyRequest, userId: string, q: Queryable = sys) => {
     const { token, hash } = newToken();
     await q.query(
       `INSERT INTO sessions (token_hash, user_id, expires_at, ip, user_agent)
@@ -110,10 +117,18 @@ export default fp(async function authPlugin(app: FastifyInstance) {
       secure: cfg.secureCookies,
       maxAge,
     });
+    return hash;
   });
 
   app.decorate("endSession", async (reply: FastifyReply, req: FastifyRequest) => {
-    if (req.sessionHash) await db.query("DELETE FROM sessions WHERE token_hash = $1", [req.sessionHash]);
+    if (req.user && req.sessionHash) await app.asUser(req).query("DELETE FROM sessions WHERE token_hash = $1", [req.sessionHash]);
     reply.clearCookie(COOKIE, { path: "/", secure: cfg.secureCookies });
   });
+
+  const ctxOf = (req: FastifyRequest) => {
+    const u = app.requireUser(req);
+    return { userId: u.id, sessionHash: req.sessionHash };
+  };
+  app.decorate("withUser", <T>(req: FastifyRequest, fn: (client: Tx) => Promise<T>) => withUser(app.db, ctxOf(req), fn));
+  app.decorate("asUser", (req: FastifyRequest) => userQueryable(app.db, ctxOf(req)));
 });

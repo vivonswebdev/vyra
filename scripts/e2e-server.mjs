@@ -24,6 +24,9 @@ const asRole = async (role) => {
 };
 const migratorUrl = await asRole("vyra_migrator");
 const appUrl = await asRole("vyra_app");
+// Lot H3 : un pool par rôle, comme en production.
+const systemUrl = await asRole("vyra_system");
+const workerUrl = await asRole("vyra_worker");
 await db.end();
 // Lot H1 : le serveur ne migre plus ; la commande de migration est lancée avant lui, comme en production.
 execFileSync(process.execPath, ["dist/api/migrate.mjs"], {
@@ -38,6 +41,8 @@ const child = spawn(process.execPath, ["dist/api/server.mjs"], {
     ...process.env,
     NODE_ENV: "test",
     DATABASE_URL: appUrl,
+    SYSTEM_DATABASE_URL: systemUrl,
+    WORKER_DATABASE_URL: workerUrl,
     PORT: "8788",
     PUBLIC_URL: "http://127.0.0.1:8788",
     WEB_DIST_DIR: path.resolve("dist/web"),

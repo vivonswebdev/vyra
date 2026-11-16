@@ -5,7 +5,8 @@ import type { FastifyInstance } from "fastify";
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 export default async function devRoutes(app: FastifyInstance) {
-  const { db } = app;
+  // Boîte de développement (jamais en production) : lecture de la file d'e-mails, comme l'envoi (vyra_worker).
+  const { worker: db } = app;
 
   app.get("/api/dev/mailbox", async (req) => {
     const to = String((req.query as any)?.to ?? "").toLowerCase();

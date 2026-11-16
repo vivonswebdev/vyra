@@ -4,7 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { ExportInput, ProjectCreateInput, ProjectUpdateInput, type ExportDTO, type ProjectDTO, type ProjectSummaryDTO } from "@vyra/shared";
 import { EXPORT_FORMATS, safeFileName, type PlanStats, type QualityIssue, type QualityReport } from "@vyra/engine";
-import { tx, type Queryable } from "../db/pool.js";
+import { type Queryable } from "../db/pool.js";
 import { badRequest, conflict, HttpError, notFound } from "../lib/errors.js";
 import { audit } from "../lib/audit.js";
 import { newStorageKey } from "../lib/storage.js";
@@ -46,7 +46,7 @@ const SUMMARY_COLUMNS = `id, name, revision, created_at, updated_at, deleted_at,
     'widthMm', round((design->>'widthMm')::numeric, 1), 'heightMm', round((design->>'heightMm')::numeric, 1)) END AS stats`;
 
 export default async function projectRoutes(app: FastifyInstance) {
-  const { db } = app;
+  // Lot H3 : chaque requête est faite pour l'utilisateur connecté, sur vyra_app et dans son contexte.
   const storage = app.storage;
 
   async function own(q: Queryable, userId: string, id: string, opts: { trashed?: boolean; lock?: boolean } = {}) {
@@ -80,7 +80,7 @@ export default async function projectRoutes(app: FastifyInstance) {
   app.get("/api/projects", async (req) => {
     const u = app.requireUser(req);
     const trash = (req.query as any)?.trash === "1";
-    const { rows } = await db.query(
+    const { rows } = await app.asUser(req).query(
       `SELECT ${SUMMARY_COLUMNS} FROM projects WHERE owner_id = $1 AND deleted_at IS ${trash ? "NOT NULL" : "NULL"}
        ORDER BY ${trash ? "deleted_at" : "updated_at"} DESC LIMIT 500`,
       [u.id],
@@ -91,7 +91,7 @@ export default async function projectRoutes(app: FastifyInstance) {
   app.post("/api/projects", async (req, reply) => {
     const u = app.requireUser(req);
     const input = ProjectCreateInput.parse(req.body);
-    const p = await tx(db, async (c) => {
+    const p = await app.withUser(req, async (c) => {
       const { rows } = await c.query(
         "INSERT INTO projects (owner_id, name, design, settings, revision) VALUES ($1,$2,$3,$4,1) RETURNING *",
         [u.id, input.name, input.design == null ? null : JSON.stringify(input.design), JSON.stringify(input.settings ?? {})],
@@ -106,14 +106,14 @@ export default async function projectRoutes(app: FastifyInstance) {
   app.get("/api/projects/:id", async (req) => {
     const u = app.requireUser(req);
     const { id } = Id.parse(req.params);
-    return { project: full(await own(db, u.id, id)) };
+    return { project: full(await own(app.asUser(req), u.id, id)) };
   });
 
   app.patch("/api/projects/:id", { bodyLimit: 12 * 1024 * 1024 }, async (req) => {
     const u = app.requireUser(req);
     const { id } = Id.parse(req.params);
     const input = ProjectUpdateInput.parse(req.body);
-    const p = await tx(db, async (c) => {
+    const p = await app.withUser(req, async (c) => {
       const cur = await own(c, u.id, id, { lock: true });
       if (cur.revision !== input.baseRevision)
         throw conflict("project_conflict", "Ce projet a été modifié ailleurs (autre onglet ou appareil). Rechargez-le avant d'enregistrer.", {
@@ -147,7 +147,7 @@ export default async function projectRoutes(app: FastifyInstance) {
   app.post("/api/projects/:id/duplicate", async (req, reply) => {
     const u = app.requireUser(req);
     const { id } = Id.parse(req.params);
-    const p = await tx(db, async (c) => {
+    const p = await app.withUser(req, async (c) => {
       const src = await own(c, u.id, id);
       const { rows } = await c.query(
         "INSERT INTO projects (owner_id, name, design, settings, revision) VALUES ($1,$2,$3,$4,1) RETURNING *",
@@ -164,17 +164,17 @@ export default async function projectRoutes(app: FastifyInstance) {
   app.delete("/api/projects/:id", async (req) => {
     const u = app.requireUser(req);
     const { id } = Id.parse(req.params);
-    await own(db, u.id, id);
-    await db.query("UPDATE projects SET deleted_at = now() WHERE id = $1", [id]);
-    await audit(db, { actorId: u.id, action: "project.trashed", subject: `project:${id}`, ip: req.ip });
+    await own(app.asUser(req), u.id, id);
+    await app.asUser(req).query("UPDATE projects SET deleted_at = now() WHERE id = $1", [id]);
+    await audit(app.asUser(req), { actorId: u.id, action: "project.trashed", subject: `project:${id}`, ip: req.ip });
     return { ok: true };
   });
 
   app.post("/api/projects/:id/restore", async (req) => {
     const u = app.requireUser(req);
     const { id } = Id.parse(req.params);
-    await own(db, u.id, id, { trashed: true });
-    const { rows } = await db.query("UPDATE projects SET deleted_at = NULL, updated_at = now() WHERE id = $1 RETURNING *", [id]);
+    await own(app.asUser(req), u.id, id, { trashed: true });
+    const { rows } = await app.asUser(req).query("UPDATE projects SET deleted_at = NULL, updated_at = now() WHERE id = $1 RETURNING *", [id]);
     return { project: full(rows[0]) };
   });
 
@@ -182,7 +182,7 @@ export default async function projectRoutes(app: FastifyInstance) {
     const u = app.requireUser(req);
     const { id } = Id.parse(req.params);
     const body = z.object({ confirmName: z.string() }).parse(req.body ?? {});
-    const keys = await tx(db, async (c) => {
+    const keys = await app.withUser(req, async (c) => {
       const p = await own(c, u.id, id, { trashed: true, lock: true });
       if (body.confirmName !== p.name) throw badRequest("name_mismatch", "Le nom saisi ne correspond pas au projet.");
       const { rows } = await c.query(
@@ -204,8 +204,8 @@ export default async function projectRoutes(app: FastifyInstance) {
   app.get("/api/projects/:id/versions", async (req) => {
     const u = app.requireUser(req);
     const { id } = Id.parse(req.params);
-    await own(db, u.id, id);
-    const { rows } = await db.query(
+    await own(app.asUser(req), u.id, id);
+    const { rows } = await app.asUser(req).query(
       "SELECT id, revision, label, created_at FROM project_versions WHERE project_id = $1 ORDER BY id DESC LIMIT 200",
       [id],
     );
@@ -215,7 +215,7 @@ export default async function projectRoutes(app: FastifyInstance) {
   app.post("/api/projects/:id/versions/:versionId/restore", async (req) => {
     const u = app.requireUser(req);
     const { id, versionId } = z.object({ id: z.uuid(), versionId: z.coerce.number().int().positive() }).parse(req.params);
-    const p = await tx(db, async (c) => {
+    const p = await app.withUser(req, async (c) => {
       await own(c, u.id, id, { lock: true });
       const { rows: v } = await c.query("SELECT * FROM project_versions WHERE id = $1 AND project_id = $2", [versionId, id]);
       if (!v[0]) throw notFound("version_not_found", "Version introuvable.");
@@ -234,12 +234,12 @@ export default async function projectRoutes(app: FastifyInstance) {
   app.get("/api/projects/:id/thumbnail.svg", async (req, reply) => {
     const u = app.requireUser(req);
     const { id } = Id.parse(req.params);
-    const p = await own(db, u.id, id);
+    const p = await own(app.asUser(req), u.id, id);
     if (!p.design) throw notFound("no_design", "Aucun motif dans ce projet.");
     let svg: string = p.thumbnail_svg;
     if (p.thumbnail_revision !== p.revision || !svg) {
       svg = (await app.engine.run<{ svg: string }>("thumbnail", { design: p.design, name: p.name })).svg;
-      await db.query("UPDATE projects SET thumbnail_svg = $2, thumbnail_revision = $3 WHERE id = $1", [id, svg, p.revision]);
+      await app.asUser(req).query("UPDATE projects SET thumbnail_svg = $2, thumbnail_revision = $3 WHERE id = $1", [id, svg, p.revision]);
     }
     reply
       .header("content-type", "image/svg+xml; charset=utf-8")
@@ -253,7 +253,7 @@ export default async function projectRoutes(app: FastifyInstance) {
   app.post("/api/projects/:id/source", async (req) => {
     const u = app.requireUser(req);
     const { id } = Id.parse(req.params);
-    await own(db, u.id, id);
+    await own(app.asUser(req), u.id, id);
     const part = await req.file({ limits: { fileSize: 20 * 1024 * 1024, files: 1 } });
     if (!part) throw badRequest("no_file", "Aucun fichier reçu.");
     const bytes = await part.toBuffer();
@@ -261,7 +261,7 @@ export default async function projectRoutes(app: FastifyInstance) {
     const kind = sniffImage(bytes, part.filename);
     if (!kind) throw badRequest("file_type", "Format refusé : PNG, JPG, WEBP, BMP, SVG ou PDF uniquement.");
     // Quarantaine puis analyse antivirus : le fichier n'est rattaché au projet que s'il est sain.
-    const file = await quarantineAndScan(app, db, {
+    const file = await quarantineAndScan(app, app.asUser(req), {
       ownerId: u.id,
       kind: "source_image",
       prefix: "sources",
@@ -272,7 +272,7 @@ export default async function projectRoutes(app: FastifyInstance) {
       sha256: sha256Hex(bytes),
       ip: req.ip,
     });
-    await db.query("INSERT INTO project_files (project_id, file_id, role) VALUES ($1,$2,'source')", [id, file.id]);
+    await app.asUser(req).query("INSERT INTO project_files (project_id, file_id, role) VALUES ($1,$2,'source')", [id, file.id]);
     return { file: { id: file.id, kind: "source_image", filename: file.filename, mime: file.mime, size: Number(file.size_bytes), sha256: file.sha256, createdAt: new Date(file.created_at).toISOString(), scanStatus: file.scan_status } };
   });
 
@@ -282,7 +282,7 @@ export default async function projectRoutes(app: FastifyInstance) {
     const u = app.requireUser(req);
     const { id } = Id.parse(req.params);
     const { format } = ExportInput.parse(req.body);
-    const p = await own(db, u.id, id);
+    const p = await own(app.asUser(req), u.id, id);
     if (!p.design) throw badRequest("no_design", "Le projet ne contient pas encore de motif.");
     const settings = p.settings ?? {};
     const r = await app.engine.run<{ blocked: boolean; bytes?: Uint8Array; stats: PlanStats; qc: QualityReport; issues?: QualityIssue[] }>("export", {
@@ -298,7 +298,7 @@ export default async function projectRoutes(app: FastifyInstance) {
     const analysis = { stats: r.stats, qc: r.qc };
     const key = newStorageKey("exports", "." + (format === "dst" ? "dst" : "pes"));
     await storage.put(key, bytes);
-    const dto = await tx(db, async (c) => {
+    const dto = await app.withUser(req, async (c) => {
       const { rows: f } = await c.query(
         `INSERT INTO files (owner_id, kind, storage_key, filename, mime, size_bytes, sha256, scan_status)
          VALUES ($1,'export',$2,$3,'application/octet-stream',$4,$5,'not_required') RETURNING id`,
@@ -318,8 +318,8 @@ export default async function projectRoutes(app: FastifyInstance) {
   app.get("/api/projects/:id/exports", async (req) => {
     const u = app.requireUser(req);
     const { id } = Id.parse(req.params);
-    await own(db, u.id, id);
-    const { rows } = await db.query(
+    await own(app.asUser(req), u.id, id);
+    const { rows } = await app.asUser(req).query(
       `SELECT e.id, e.format, e.revision, e.stats, e.created_at, f.filename, f.size_bytes, f.sha256
          FROM project_exports e JOIN files f ON f.id = e.file_id WHERE e.project_id = $1 AND f.deleted_at IS NULL
         ORDER BY e.created_at DESC LIMIT 100`,
@@ -331,7 +331,7 @@ export default async function projectRoutes(app: FastifyInstance) {
   app.get("/api/exports/:id/download", async (req, reply) => {
     const u = app.requireUser(req);
     const { id } = Id.parse(req.params);
-    const { rows } = await db.query(
+    const { rows } = await app.asUser(req).query(
       `SELECT f.storage_key, f.filename FROM project_exports e JOIN files f ON f.id = e.file_id JOIN projects p ON p.id = e.project_id
         WHERE e.id = $1 AND p.owner_id = $2 AND f.deleted_at IS NULL`,
       [id, u.id],
@@ -343,7 +343,7 @@ export default async function projectRoutes(app: FastifyInstance) {
   app.get("/api/files/:id", async (req, reply) => {
     const u = app.requireUser(req);
     const { id } = Id.parse(req.params);
-    const { rows } = await db.query(
+    const { rows } = await app.asUser(req).query(
       "SELECT storage_key, filename, mime FROM files WHERE id = $1 AND owner_id = $2 AND deleted_at IS NULL AND kind = 'source_image' AND scan_status = ANY($3)",
       [id, u.id, servableStates(app)],
     );

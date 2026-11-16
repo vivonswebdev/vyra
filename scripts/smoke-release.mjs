@@ -60,17 +60,21 @@ const runSql = async (url, file) => {
 };
 await runSql(DB.replace(/\/[^/]+$/, "/postgres"), "roles.sql");
 await runSql(DB, "database-setup.sql");
-const pw = { migrator: crypto.randomBytes(18).toString("hex"), app: crypto.randomBytes(18).toString("hex") };
+const pw = Object.fromEntries(["migrator", "app", "system", "worker"].map((r) => [r, crypto.randomBytes(18).toString("hex")]));
 {
   const c = new pg.Client({ connectionString: DB });
   await c.connect();
   await c.query(`ALTER ROLE vyra_migrator PASSWORD '${pw.migrator}'`);
   await c.query(`ALTER ROLE vyra_app PASSWORD '${pw.app}'`);
+  await c.query(`ALTER ROLE vyra_system PASSWORD '${pw.system}'`);
+  await c.query(`ALTER ROLE vyra_worker PASSWORD '${pw.worker}'`);
   await c.end();
 }
 const asRole = (role, password) => DB.replace(/^postgres(ql)?:\/\/[^@]+@/, `postgres://${role}:${password}@`);
 const MIGRATOR_URL = asRole("vyra_migrator", pw.migrator);
 const APP_URL = asRole("vyra_app", pw.app);
+const SYSTEM_URL = asRole("vyra_system", pw.system);
+const WORKER_URL = asRole("vyra_worker", pw.worker);
 const metricsToken = crypto.randomBytes(24).toString("hex");
 const prodEnv = {
   PATH: process.env.PATH, NODE_ENV: "production", HOST: "127.0.0.1", PORT: String(PORT), PUBLIC_URL: "https://studio.vyra.example",
@@ -82,7 +86,7 @@ const prodEnv = {
 };
 execFileSync(process.execPath, ["dist/api/migrate.mjs"], {
   cwd: app, stdio: "inherit",
-  env: { ...prodEnv, DATABASE_URL: APP_URL, MIGRATION_DATABASE_URL: MIGRATOR_URL, MIGRATION_SET_ROLE: "vyra_owner" },
+  env: { ...prodEnv, DATABASE_URL: APP_URL, SYSTEM_DATABASE_URL: SYSTEM_URL, WORKER_DATABASE_URL: WORKER_URL, MIGRATION_DATABASE_URL: MIGRATOR_URL, MIGRATION_SET_ROLE: "vyra_owner" },
 });
 {
   // Lot H2 : tables dans le schéma vyra, au propriétaire vyra_owner ; public vide ; droits posés par 009.
@@ -103,7 +107,7 @@ step("migration séparée par vyra_migrator : 17 tables dans le schéma vyra, po
 const child = spawn(process.execPath, ["dist/api/server.mjs"], {
   cwd: app,
   env: {
-    ...prodEnv, DATABASE_URL: APP_URL,
+    ...prodEnv, DATABASE_URL: APP_URL, SYSTEM_DATABASE_URL: SYSTEM_URL, WORKER_DATABASE_URL: WORKER_URL,
   },
   stdio: ["ignore", "inherit", "inherit"],
 });
@@ -115,7 +119,7 @@ try {
   }
   const ready = await (await fetch(`${BASE}/api/ready`)).json();
   if (!ready.ok) throw new Error("ready : " + JSON.stringify(ready.checks));
-  step("démarrage en production avec vyra_app (sans privilège de migration) : base, migrations, stockage S3, moteur, antivirus, e-mails prêts");
+  step("démarrage en production avec trois rôles (vyra_app, vyra_system, vyra_worker), sans privilège de migration : base, migrations, stockage S3, moteur, antivirus, e-mails prêts");
 
   // 5. Parcours réel
   const H = { "x-vyra-client": "web", "content-type": "application/json", origin: "https://studio.vyra.example" };

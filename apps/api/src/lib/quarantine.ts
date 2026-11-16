@@ -12,6 +12,10 @@ export function servableStates(app: FastifyInstance): string[] {
   return app.cfg.FILE_SCAN === "off" && !app.cfg.isProd ? ["clean", "not_required", "unscanned"] : ["clean", "not_required"];
 }
 
+/**
+ * Dépôt d'un fichier par l'utilisateur. `q` doit être hors transaction (requêtes isolées, app.asUser) : le
+ * verdict « infecté » ou « erreur d'analyse » est enregistré même si la requête échoue ensuite.
+ */
 export async function quarantineAndScan(
   app: FastifyInstance,
   q: Queryable,
@@ -51,17 +55,17 @@ export async function quarantineAndScan(
   }
   if (v.verdict === "infected") {
     await app.storage.delete(qkey);
-    await app.db.query("UPDATE files SET scan_status = 'infected', scan_detail = $2, scan_engine = $3, scanned_at = now(), deleted_at = now() WHERE id = $1", [
+    await q.query("UPDATE files SET scan_status = 'infected', scan_detail = $2, scan_engine = $3, scanned_at = now(), deleted_at = now() WHERE id = $1", [
       id,
       v.signature,
       app.scanner.engine,
     ]);
-    await audit(app.db, { actorId: file.ownerId, action: "file.infected", subject: `file:${id}`, ip: file.ip, details: { signature: v.signature, filename: file.filename, sha256: file.sha256 } });
+    await audit(q, { actorId: file.ownerId, action: "file.infected", subject: `file:${id}`, ip: file.ip, details: { signature: v.signature, filename: file.filename, sha256: file.sha256 } });
     app.log.warn({ file: id, signature: v.signature }, "fichier infecté refusé");
     throw new HttpError(422, "file_infected", "Fichier refusé : l'analyse antivirus a détecté une menace.", { signature: v.signature });
   }
-  await app.db.query("UPDATE files SET scan_status = 'error', scan_detail = $2, scan_engine = $3, scanned_at = now() WHERE id = $1", [id, v.detail, app.scanner.engine]);
-  await audit(app.db, { actorId: file.ownerId, action: "file.scan_error", subject: `file:${id}`, ip: file.ip, details: { detail: v.detail } });
+  await q.query("UPDATE files SET scan_status = 'error', scan_detail = $2, scan_engine = $3, scanned_at = now() WHERE id = $1", [id, v.detail, app.scanner.engine]);
+  await audit(q, { actorId: file.ownerId, action: "file.scan_error", subject: `file:${id}`, ip: file.ip, details: { detail: v.detail } });
   app.log.error({ file: id, detail: v.detail }, "analyse antivirus impossible : fichier conservé en quarantaine");
   throw new HttpError(503, "scan_unavailable", "Analyse antivirus momentanément indisponible : le fichier est gardé en quarantaine et n'est pas utilisé. Réessayez dans quelques minutes.");
 }
@@ -70,7 +74,7 @@ export async function quarantineAndScan(
 export async function rescanUnscanned(app: FastifyInstance, limit = 50): Promise<{ clean: number; infected: number; errors: number }> {
   const out = { clean: 0, infected: 0, errors: 0 };
   if (app.cfg.FILE_SCAN === "off") return out;
-  const { rows } = await app.db.query("SELECT id, owner_id, storage_key, filename FROM files WHERE scan_status = 'unscanned' AND deleted_at IS NULL LIMIT $1", [limit]);
+  const { rows } = await app.worker.query("SELECT id, owner_id, storage_key, filename FROM files WHERE scan_status = 'unscanned' AND deleted_at IS NULL LIMIT $1", [limit]);
   for (const f of rows) {
     let bytes: Buffer;
     try {
@@ -81,12 +85,12 @@ export async function rescanUnscanned(app: FastifyInstance, limit = 50): Promise
     }
     const v = await app.scanner.scan(bytes);
     if (v.verdict === "clean") {
-      await app.db.query("UPDATE files SET scan_status = 'clean', scan_engine = $2, scanned_at = now() WHERE id = $1", [f.id, app.scanner.engine]);
+      await app.worker.query("UPDATE files SET scan_status = 'clean', scan_engine = $2, scanned_at = now() WHERE id = $1", [f.id, app.scanner.engine]);
       out.clean++;
     } else if (v.verdict === "infected") {
       await app.storage.delete(f.storage_key).catch(() => {});
-      await app.db.query("UPDATE files SET scan_status = 'infected', scan_detail = $2, scanned_at = now(), deleted_at = now() WHERE id = $1", [f.id, v.signature]);
-      await audit(app.db, { actorId: f.owner_id, action: "file.infected", subject: `file:${f.id}`, details: { signature: v.signature, rescan: true } });
+      await app.worker.query("UPDATE files SET scan_status = 'infected', scan_detail = $2, scanned_at = now(), deleted_at = now() WHERE id = $1", [f.id, v.signature]);
+      await audit(app.worker, { actorId: f.owner_id, action: "file.infected", subject: `file:${f.id}`, details: { signature: v.signature, rescan: true } });
       out.infected++;
     } else out.errors++;
   }

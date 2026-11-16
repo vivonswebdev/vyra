@@ -243,7 +243,7 @@ describe("cookie de session en HTTPS", () => {
     const { buildApp } = await import("../src/app.js");
     const { loadConfig } = await import("../src/config.js");
     const cfg = loadConfig({ NODE_ENV: "test" } as any, { DATABASE_URL: "unused", STORAGE_DIR: ctx.storageDir, LOG_LEVEL: "silent", PUBLIC_URL: "https://studio.vyra.example", AUTH_RATE_LIMIT: 10_000 } as any);
-    const app = await buildApp({ cfg, db: ctx.appDb });
+    const app = await buildApp({ cfg, ...ctx.pools });
     await app.inject({ method: "POST", url: "/api/auth/signup", headers: { "x-vyra-client": "web" }, payload: { email: "https@example.com", password: PW, displayName: "H", acceptTerms: true } });
     const token = tokenFrom((await lastEmail(ctx.db, "https@example.com")).body_text);
     const r = await app.inject({ method: "POST", url: "/api/auth/verify-email", headers: { "x-vyra-client": "web" }, payload: { token } });

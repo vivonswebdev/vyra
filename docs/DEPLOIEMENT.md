@@ -67,8 +67,9 @@ psql "$ADMIN_URL/vyra" -f scripts/db/database-setup.sql
 |---|---|
 | `vyra_owner` | possède les objets ; aucune connexion |
 | `vyra_migrator` | commande de migration seulement ; prend `vyra_owner` le temps de chaque migration |
-| `vyra_app` | serveur (aujourd'hui seul rôle d'exécution utilisé) |
-| `vyra_system`, `vyra_worker` | droits cibles posés (009) ; utilisés à partir du lot H3 |
+| `vyra_app` | serveur : requêtes faites pour l'utilisateur connecté (`DATABASE_URL`) |
+| `vyra_system` | serveur : authentification, liens reçus par e-mail, limitation de débit (`SYSTEM_DATABASE_URL`) |
+| `vyra_worker` | serveur : envoi des e-mails, purges, réanalyse antivirus, santé et métriques (`WORKER_DATABASE_URL`) |
 | `vyra_market` | aucun droit sur les tables du socle |
 | `vyra_backup` | sauvegarde, lecture seule (seul rôle qui contourne RLS) |
 
@@ -83,8 +84,13 @@ node dist/api/migrate.mjs --status   # code 0 à jour, 1 en attente, 2 anomalie 
 `database-setup.sql` crée ce schéma et règle le chemin de recherche `vyra, public` de chaque rôle dans la base ;
 l'API l'impose aussi à chaque connexion. Les droits des rôles sont posés par la migration
 `009_core_privileges` (matrice par table et par colonne) : il n'y a plus de script de droits à réappliquer.
-Jusqu'au lot H3, `vyra_app` porte aussi, à titre transitoire, les droits de `vyra_system` et `vyra_worker`
-(l'API n'a encore qu'un pool).
+**Trois connexions (lot H3).** Le serveur ouvre un pool par rôle ; en production, `DATABASE_URL` (vyra_app),
+`SYSTEM_DATABASE_URL` (vyra_system) et `WORKER_DATABASE_URL` (vyra_worker) sont obligatoires et le serveur
+refuse de démarrer si une connexion n'utilise pas le rôle attendu. La commande de migration lit la même
+configuration : lui fournir les mêmes variables. La migration `010_core_privileges_split` retire à vyra_app les
+droits transitoires du lot H2 : l'API d'une version antérieure à H3 ne fonctionne plus après elle.
+Chaque requête faite pour un utilisateur connecté s'exécute dans une transaction qui porte son identifiant et
+l'empreinte de sa session (`set_config(…, true)`) ; ce contexte sera exigé par les politiques RLS du lot H5.
 
 Procédure de mise à jour :
 
@@ -99,10 +105,10 @@ le registre (catalogue seulement, aucune copie ; verrou bref, `lock_timeout` 10 
 deux schémas annule la migration. Prévoir une courte fenêtre de maintenance.
 
 **Retour arrière.** Les migrations ne se défont pas (pas de « down ») ; la voie normale est le retour en avant
-(nouvelle migration corrective). Revenir au code du lot H1 après 007-009 est impossible tel quel (le serveur H1
+(nouvelle migration corrective). Revenir au code du lot H1 après 007-010 est impossible tel quel (le serveur H1
 verrait des migrations orphelines et refuserait de démarrer). Deux possibilités, API arrêtée :
 - `psql "<url vyra_migrator>" -v ON_ERROR_STOP=1 --single-transaction -f scripts/db/rollback-h2.sql` : tables et
-  registre remis dans `public`, droits du lot H1 rétablis, lignes 007-009 retirées du registre, schéma `vyra`
+  registre remis dans `public`, droits du lot H1 rétablis, lignes 007-010 retirées du registre, schéma `vyra`
   (vide) supprimé ; **aucune perte de données** (aller-retour vérifié en test : `db-roles.test.ts`) ;
 - ou restauration de la sauvegarde de l'étape 1 dans une base neuve (les écritures postérieures sont perdues).
 

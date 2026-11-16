@@ -85,16 +85,16 @@ describe("sauvegarde et restauration", () => {
     expect(owners).toEqual(["vyra_owner"]);
 
     // L'API fonctionne sur la base restaurée avec vyra_app.
-    const db2 = appPool(target);
+    const db2 = appPool(target), sys2 = appPool(target, "vyra_system"), worker2 = appPool(target, "vyra_worker");
     const cfg = loadConfig({ NODE_ENV: "test" } as any, { DATABASE_URL: target, STORAGE_DIR: restoredStorage, LOG_LEVEL: "silent", PUBLIC_URL: "http://vyra.test", AUTH_RATE_LIMIT: 10_000 } as any);
-    const app2 = await buildApp({ cfg, db: db2 });
+    const app2 = await buildApp({ cfg, db: db2, sys: sys2, worker: worker2 });
     const c2 = new Client(app2);
     expect((await c2.post("/api/auth/login", { email, password: "un-mot-de-passe-solide" })).status).toBe(200);
     expect((await c2.get(`/api/projects/${p.id}`)).json.project.name).toBe("À sauvegarder v2");
     expect((await c2.get(`/api/projects/${p.id}/versions`)).json.versions.map((v: any) => v.label)).toContain("Avant sauvegarde");
     expect(Buffer.compare((await c2.get(`/api/files/${file.id}`)).res.rawPayload, png)).toBe(0);
     await app2.close();
-    await db2.end();
+    await Promise.all([db2.end(), sys2.end(), worker2.end()]);
 
     // Une seconde restauration sur la même base est refusée, même avec --remplacer, sans rien modifier.
     const before = await objects(target);

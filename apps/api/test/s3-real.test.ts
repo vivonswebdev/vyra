@@ -82,7 +82,7 @@ describe.runIf(!!ENDPOINT)(`stockage S3 réel (${ENDPOINT || "non configuré"})`
       STORAGE_DRIVER: "s3", S3_ENDPOINT: ENDPOINT, S3_REGION: REGION, S3_BUCKET: BUCKET, S3_PREFIX: "api",
       S3_ACCESS_KEY_ID: AK, S3_SECRET_ACCESS_KEY: SK, S3_PRESIGNED_DOWNLOADS: "true", S3_PRESIGN_TTL_SECONDS: 30,
     } as any);
-    const app = await buildApp({ cfg, db: ctx.appDb });
+    const app = await buildApp({ cfg, ...ctx.pools });
     const { c } = await signup(app);
     const p = (await c.post("/api/projects", { name: "s3", design: null })).json.project;
     const b = "----vyra-s3";

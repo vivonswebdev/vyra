@@ -26,6 +26,10 @@ import { EnginePool } from "./engine/pool.js";
 
 declare module "fastify" {
   interface FastifyInstance {
+    /** Pool vyra_system : authentification et accès sans utilisateur (lot H3). */
+    sys: Db;
+    /** Pool vyra_worker : tâches de fond, santé et métriques (lot H3). */
+    worker: Db;
     storage: Storage;
     engine: EnginePool;
     scanner: FileScanner;
@@ -34,7 +38,11 @@ declare module "fastify" {
 
 export interface AppDeps {
   cfg: Config;
+  /** Pool vyra_app : requêtes faites pour l'utilisateur connecté. */
   db: Db;
+  /** Pools vyra_system et vyra_worker ; à défaut (développement local), celui de db. */
+  sys?: Db;
+  worker?: Db;
   storage?: Storage;
   scanner?: FileScanner;
 }
@@ -43,7 +51,7 @@ const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 /** Routes appelées par des services externes, authentifiées par signature et non par cookie. */
 const CSRF_EXEMPT = [/^\/api\/webhooks\//];
 
-export async function buildApp({ cfg, db, storage, scanner }: AppDeps): Promise<FastifyInstance> {
+export async function buildApp({ cfg, db, sys = db, worker = db, storage, scanner }: AppDeps): Promise<FastifyInstance> {
   const app = Fastify({
     logger: cfg.LOG_LEVEL === "silent" ? false : { level: cfg.LOG_LEVEL, redact: ["req.headers.cookie", "req.headers.authorization"] },
     trustProxy: cfg.TRUST_PROXY,
@@ -58,6 +66,8 @@ export async function buildApp({ cfg, db, storage, scanner }: AppDeps): Promise<
     reply.header("x-request-id", req.id);
   });
   app.decorate("db", db);
+  app.decorate("sys", sys);
+  app.decorate("worker", worker);
   app.decorate("cfg", cfg);
   app.decorate("storage", storage ?? createStorage(cfg));
   app.decorate("scanner", scanner ?? (cfg.FILE_SCAN === "clamd" ? new ClamdScanner(cfg.CLAMD_HOST, cfg.CLAMD_PORT, cfg.CLAMD_TIMEOUT_MS) : new NoScanner()));
@@ -89,7 +99,7 @@ export async function buildApp({ cfg, db, storage, scanner }: AppDeps): Promise<
     global: true,
     max: 600,
     timeWindow: "1 minute",
-    ...(cfg.RATE_LIMIT_STORE === "postgres" ? { store: pgRateLimitStore(db, cfg.RATE_LIMIT_NAMESPACE) as any } : {}),
+    ...(cfg.RATE_LIMIT_STORE === "postgres" ? { store: pgRateLimitStore(sys, cfg.RATE_LIMIT_NAMESPACE) as any } : {}),
     errorResponseBuilder: (_req, ctx) => ({ statusCode: 429, code: "rate_limited", message: `Trop de requêtes. Réessayez dans ${Math.ceil(ctx.ttl / 1000)} s.` }),
   });
   await app.register(multipart);

@@ -6,10 +6,10 @@
 -- Ensuite, par l'administrateur (facultatif) : ALTER ROLE … IN DATABASE … RESET search_path pour chaque rôle.
 --
 -- Effets, dans une seule transaction (tout ou rien) :
---   1. contrôles : registre dans vyra, migrations 007-009 appliquées et aucune migration postérieure ;
+--   1. contrôles : registre dans vyra, migrations 007-009 (et 010, lot H3) appliquées, aucune autre postérieure ;
 --   2. les 16 tables et le registre reviennent dans public (catalogue seulement, aucune copie) ;
 --   3. droits de transition du lot H1 rétablis (vyra_app : opérations de données sur toutes les tables du socle) ;
---   4. lignes 007-009 retirées du registre (le runner H1 ne les connaît pas : sinon il refuserait de démarrer) ;
+--   4. lignes 007-010 retirées du registre (le runner H1 ne les connaît pas : sinon il refuserait de démarrer) ;
 --   5. schéma vyra supprimé s'il est vide (sinon échec et annulation) : le runner H1 y recréerait un registre vide.
 -- La clé étrangère corrigée par 007 (ON DELETE SET NULL) est conservée : elle est compatible avec le code H1.
 SET ROLE vyra_owner;
@@ -27,7 +27,8 @@ BEGIN
     RAISE EXCEPTION 'Registre absent du schéma vyra : rien à défaire.';
   END IF;
   SELECT array_agg(name ORDER BY name) INTO applied FROM vyra.schema_migrations WHERE name >= '007';
-  IF applied IS DISTINCT FROM ARRAY['007_core_user_roles_fk.sql', '008_core_schema_vyra.sql', '009_core_privileges.sql'] THEN
+  IF applied IS DISTINCT FROM ARRAY['007_core_user_roles_fk.sql', '008_core_schema_vyra.sql', '009_core_privileges.sql']
+     AND applied IS DISTINCT FROM ARRAY['007_core_user_roles_fk.sql', '008_core_schema_vyra.sql', '009_core_privileges.sql', '010_core_privileges_split.sql'] THEN
     RAISE EXCEPTION 'Migrations postérieures à H1 inattendues : % (retour arrière refusé).', applied;
   END IF;
 
@@ -51,7 +52,7 @@ BEGIN
     EXECUTE format('GRANT USAGE ON SEQUENCE public.%I TO vyra_app', t);
   END LOOP;
 
-  DELETE FROM public.schema_migrations WHERE name IN ('007_core_user_roles_fk.sql', '008_core_schema_vyra.sql', '009_core_privileges.sql');
+  DELETE FROM public.schema_migrations WHERE name IN ('007_core_user_roles_fk.sql', '008_core_schema_vyra.sql', '009_core_privileges.sql', '010_core_privileges_split.sql');
 END $$;
 
 ALTER DEFAULT PRIVILEGES FOR ROLE vyra_owner GRANT EXECUTE ON FUNCTIONS TO PUBLIC;
