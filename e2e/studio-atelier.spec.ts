@@ -68,3 +68,45 @@ test("atelier : broderie du projet sur un vêtement 3D et un patron 2D, textes i
   await expect(page.getByTestId("open-atelier")).toHaveAttribute("href", `/studio/p/${id}/atelier`);
   expect(errors).toEqual([]);
 });
+
+test("atelier : image importée et motif continu sur tout le vêtement (devant, manches, dos)", async ({ page }) => {
+  const errors = trackErrors(page);
+  await signupApi(page);
+  await page.goto("/studio/");
+  await page.getByTestId("new-design").click();
+  await page.getByTestId("demo-02-fleur").click();
+  await page.waitForURL(/\/studio\/p\//);
+  await waitSaved(page);
+  const id = page.url().split("/p/")[1];
+  await page.goto(`/studio/p/${id}/atelier`);
+  await expect(page.getByTestId("atelier")).toBeVisible();
+  const layers = page.getByTestId("at-layers").getByRole("listitem");
+  await expect(layers).toHaveCount(2);
+  await expect.poll(() => sample(page, "at-2d")).toBeGreaterThan(0);
+
+  // Image : importée, posée sur le devant, puis étendue à tout le vêtement.
+  const before = await sample(page, "at-2d");
+  await page.getByTestId("at-image-file").setInputFiles("packages/engine/fixtures/motifs/02-fleur.png");
+  await expect(layers).toHaveCount(3);
+  await expect(page.getByTestId("at-layers")).toContainText("02-fleur.png");
+  await expect.poll(() => sample(page, "at-2d")).not.toBe(before);
+  await page.getByRole("group", { name: "Pièce" }).getByRole("button", { name: "Tout le vêtement" }).click();
+  await expect(page.getByTestId("at-props")).toContainText("Motif continu");
+  const onSheet = await sample(page, "at-2d");
+  await page.locator("#at-img-w").fill("120");
+  await expect.poll(() => sample(page, "at-2d")).not.toBe(onSheet);
+
+  // Forme : une bande sur toute la feuille, donc tout le tour du vêtement.
+  const withImage = await sample(page, "at-2d");
+  await page.getByTestId("at-add-shape").click();
+  await expect(layers).toHaveCount(4);
+  await expect(page.getByTestId("at-layers")).toContainText("Tout le vêtement");
+  await expect.poll(() => sample(page, "at-2d")).not.toBe(withImage);
+  await expect.poll(() => sample(page, "at-3d")).toBeGreaterThan(0);
+
+  // Gardés dans ce navigateur, image comprise.
+  await page.reload();
+  await expect(page.getByTestId("at-layers").getByRole("listitem")).toHaveCount(4);
+  await expect(page.getByTestId("at-layers")).toContainText("02-fleur.png");
+  expect(errors).toEqual([]);
+});

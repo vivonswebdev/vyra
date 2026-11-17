@@ -3,6 +3,7 @@
 // côtes, coutures, poche, impressions de texte (sérigraphie ou gonflant) et broderie du projet, plus une carte
 // de relief (tricot, encre, points de broderie).
 import { type Garment, type Layout, type PieceId, PX_PER_CM as S, topEdge } from "./garments.js";
+import { inverse, pieceClip, sheetPieces } from "./sheet.js";
 
 export type FontId = "anton" | "unbounded" | "bodoni" | "fraunces" | "caveat" | "mono" | "inter";
 export const FONTS: { id: FontId; name: string; css: string; weight: string; style: string }[] = [
@@ -15,7 +16,12 @@ export const FONTS: { id: FontId; name: string; css: string; weight: string; sty
   { id: "inter", name: "Inter", css: '"Inter Variable", "Inter", system-ui, sans-serif', weight: "700", style: "normal" },
 ];
 
-interface LayerBase { id: number; piece: PieceId; x: number; y: number; rotate: number; visible: boolean }
+/**
+ * Emplacement d'un calque : une pièce (coordonnées de pièce, en cm), ou « sheet » : la feuille du patron entière
+ * (motif continu, coordonnées de feuille, voir sheet.ts), qui traverse les coutures.
+ */
+export type Placement = PieceId | "sheet";
+interface LayerBase { id: number; piece: Placement; x: number; y: number; rotate: number; visible: boolean }
 export interface TextLayer extends LayerBase {
   kind: "text";
   text: string;
@@ -34,8 +40,28 @@ export interface TextLayer extends LayerBase {
   autoInk?: boolean;
   opacity: number;
 }
-export interface EmbroideryLayer extends LayerBase { kind: "embroidery" }
-export type AtelierLayer = TextLayer | EmbroideryLayer;
+export interface EmbroideryLayer extends LayerBase { kind: "embroidery"; piece: PieceId }
+/** Image importée (PNG, JPG, WEBP), imprimée en impression numérique : largeur en cm, proportions gardées. */
+export interface ImageLayer extends LayerBase {
+  kind: "image";
+  /** Image réduite et encodée (data URL) : elle reste dans le navigateur. */
+  src: string;
+  name: string;
+  w: number;
+  /** Hauteur / largeur de l'image. */
+  aspect: number;
+  opacity: number;
+}
+/** Forme pleine (bande, triangle, disque), pour composer des motifs. */
+export interface ShapeLayer extends LayerBase {
+  kind: "shape";
+  shape: "rect" | "triangle" | "circle";
+  w: number;
+  h: number;
+  fill: string;
+  opacity: number;
+}
+export type AtelierLayer = TextLayer | EmbroideryLayer | ImageLayer | ShapeLayer;
 
 /** Broderie du projet, rendue point par point par le moteur, avec sa taille réelle. */
 export interface EmbroideryArt { canvas: HTMLCanvasElement; wCm: number; hCm: number }
@@ -51,6 +77,8 @@ export interface AtlasInput {
   printType: PrintType;
   layers: AtelierLayer[];
   embroidery: EmbroideryArt | null;
+  /** Images décodées des calques image, par identifiant de calque (absente tant qu'elle se décode). */
+  images?: Map<number, CanvasImageSource>;
   /** Libellés imprimés sur le plan (traduits par la page). */
   labels: { front: string; back: string };
 }
@@ -155,6 +183,8 @@ export class Atlas {
   readonly bump = document.createElement("canvas");
   private ink = document.createElement("canvas");
   private emb = document.createElement("canvas");
+  /** Images et formes : impression numérique, nette (sans le grain de la sérigraphie). */
+  private dye = document.createElement("canvas");
   private mask = document.createElement("canvas");
   private knit: CanvasPattern | null = null;
   private noise: CanvasPattern | null = null;
@@ -183,31 +213,34 @@ export class Atlas {
   render(inp: AtlasInput) {
     const { garment: g, layout } = inp;
     const W = Math.ceil(layout.width * S), H = Math.ceil(layout.height * S);
-    for (const c of [this.canvas, this.bump, this.ink, this.emb, this.mask]) if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+    for (const c of [this.canvas, this.bump, this.ink, this.emb, this.dye, this.mask]) if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
     const actx = this.canvas.getContext("2d")!;
     this.patterns(actx);
     this.base(actx, inp);
 
-    // Textes imprimés.
-    const ictx = this.ink.getContext("2d")!, ectx = this.emb.getContext("2d")!;
-    for (const c of [ictx, ectx]) { c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, W, H); }
+    // Impressions : textes (sérigraphie ou gonflant), images et formes (impression numérique), broderie.
+    const ictx = this.ink.getContext("2d")!, ectx = this.emb.getContext("2d")!, dctx = this.dye.getContext("2d")!;
+    for (const c of [ictx, ectx, dctx]) { c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, W, H); }
     this.boxes.clear();
+    const sheet = sheetPieces(g).filter((p) => p.kind !== "hood");
     for (const L of inp.layers) {
-      const r = layout.regions[L.piece];
-      const ctx = L.kind === "text" ? ictx : ectx;
-      ctx.save();
-      ctx.setTransform(S, 0, 0, S, (r.x0 + r.w / 2) * S, r.y0 * S);
-      ctx.beginPath(); ctx.rect(-r.w / 2, 0, r.w, r.h); ctx.clip();
-      ctx.translate(L.x, L.y); ctx.rotate((L.rotate * Math.PI) / 180);
-      if (L.kind === "text") {
-        ctx.fillStyle = L.ink; ctx.globalAlpha = L.opacity; ctx.textBaseline = "alphabetic";
-        this.boxes.set(L.id, layoutText(ctx, L, L.visible));
-      } else if (inp.embroidery) {
-        const { canvas, wCm, hCm } = inp.embroidery;
-        if (L.visible) { ctx.imageSmoothingQuality = "high"; ctx.drawImage(canvas, -wCm / 2, -hCm / 2, wCm, hCm); }
-        this.boxes.set(L.id, { w: wCm, h: hCm });
+      const ctx = L.kind === "text" ? ictx : L.kind === "embroidery" ? ectx : dctx;
+      // Un calque de pièce est dessiné une fois, dans sa pièce ; un motif continu, dans chaque pièce de la
+      // feuille qu'il recouvre (passage feuille → pièce, découpé au contour de la pièce).
+      const frames = L.piece === "sheet"
+        ? sheet.map((p) => ({ piece: p.piece as PieceId, pre: inverse(p.M), clip: pieceClip(g, p) }))
+        : [{ piece: L.piece, pre: null, clip: { x: -layout.regions[L.piece].w / 2, y: 0, w: layout.regions[L.piece].w, h: layout.regions[L.piece].h } }];
+      for (const f of frames) {
+        const r = layout.regions[f.piece];
+        ctx.save();
+        ctx.setTransform(S, 0, 0, S, (r.x0 + r.w / 2) * S, r.y0 * S);
+        ctx.beginPath(); ctx.rect(f.clip.x, f.clip.y, f.clip.w, f.clip.h); ctx.clip();
+        if (f.pre) ctx.transform(f.pre.a, f.pre.b, f.pre.c, f.pre.d, f.pre.e, f.pre.f);
+        ctx.translate(L.x, L.y); ctx.rotate((L.rotate * Math.PI) / 180);
+        const box = this.drawLayer(ctx, L, inp);
+        if (box) this.boxes.set(L.id, box);
+        ctx.restore();
       }
-      ctx.restore();
     }
     if (inp.printType === "screen") {
       ictx.globalCompositeOperation = "destination-out"; ictx.globalAlpha = 0.3; ictx.fillStyle = this.noise!;
@@ -215,6 +248,7 @@ export class Atlas {
       ictx.globalAlpha = 1; ictx.globalCompositeOperation = "source-over";
     }
     actx.setTransform(1, 0, 0, 1, 0, 0);
+    actx.drawImage(this.dye, 0, 0);
     actx.save();
     if (inp.printType === "puff") { actx.shadowColor = "rgba(0,0,0,.28)"; actx.shadowBlur = 6; actx.shadowOffsetY = 2; }
     actx.drawImage(this.ink, 0, 0);
@@ -236,9 +270,38 @@ export class Atlas {
       b.save(); b.globalAlpha = amount; if (blur) b.filter = `blur(${blur}px)`; b.drawImage(this.mask, 0, 0); b.restore();
     };
     relief(this.ink, inp.printType === "puff" ? 1 : 0.18, inp.printType === "puff" ? 5 : 0);
+    relief(this.dye, 0.06, 0);
     relief(this.emb, 0.85, 1);
     b.save(); b.globalCompositeOperation = "multiply"; b.drawImage(this.emb, 0, 0); b.restore();
     this.version++;
+  }
+
+  /** Dessine un calque centré sur (0, 0), en cm ; retourne sa boîte (cm), ou null si rien à mesurer. */
+  private drawLayer(ctx: CanvasRenderingContext2D, L: AtelierLayer, inp: AtlasInput): { w: number; h: number } | null {
+    if (L.kind === "text") {
+      ctx.fillStyle = L.ink; ctx.globalAlpha = L.opacity; ctx.textBaseline = "alphabetic";
+      return layoutText(ctx, L, L.visible);
+    }
+    if (L.kind === "embroidery") {
+      if (!inp.embroidery) return null;
+      const { canvas, wCm, hCm } = inp.embroidery;
+      if (L.visible) { ctx.imageSmoothingQuality = "high"; ctx.drawImage(canvas, -wCm / 2, -hCm / 2, wCm, hCm); }
+      return { w: wCm, h: hCm };
+    }
+    if (L.kind === "image") {
+      const h = L.w * L.aspect, img = inp.images?.get(L.id);
+      if (L.visible && img) { ctx.globalAlpha = L.opacity; ctx.imageSmoothingQuality = "high"; ctx.drawImage(img, -L.w / 2, -h / 2, L.w, h); }
+      return { w: L.w, h };
+    }
+    if (L.visible) {
+      ctx.globalAlpha = L.opacity; ctx.fillStyle = L.fill;
+      ctx.beginPath();
+      if (L.shape === "rect") ctx.rect(-L.w / 2, -L.h / 2, L.w, L.h);
+      else if (L.shape === "triangle") { ctx.moveTo(0, -L.h / 2); ctx.lineTo(L.w / 2, L.h / 2); ctx.lineTo(-L.w / 2, L.h / 2); ctx.closePath(); }
+      else ctx.ellipse(0, 0, L.w / 2, L.h / 2, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    return { w: L.w, h: L.h };
   }
 
   private base(ctx: CanvasRenderingContext2D, inp: AtlasInput) {
@@ -321,10 +384,25 @@ export class Atlas {
 
 /** Calque visible sous un point d'une pièce (le plus haut d'abord), d'après les boîtes du dernier rendu. */
 export function hitTest(layers: AtelierLayer[], boxes: Map<number, { w: number; h: number }>, piece: PieceId, x: number, y: number, margin = 0.8): AtelierLayer | null {
+  return pickLayer(layers, boxes, { sheet: null, piece: { piece, x, y } }, margin);
+}
+
+/**
+ * Calque visible sous un point (le plus haut d'abord). Le point est donné sur la feuille (motifs continus) et,
+ * s'il tombe dans une pièce, en coordonnées de cette pièce (calques de pièce).
+ */
+export function pickLayer(
+  layers: AtelierLayer[],
+  boxes: Map<number, { w: number; h: number }>,
+  at: { sheet: [number, number] | null; piece: { piece: PieceId; x: number; y: number } | null },
+  margin = 0.8,
+): AtelierLayer | null {
   for (let i = layers.length - 1; i >= 0; i--) {
     const L = layers[i], b = boxes.get(L.id);
-    if (!L.visible || L.piece !== piece || !b) continue;
-    const a = (-L.rotate * Math.PI) / 180, dx = x - L.x, dy = y - L.y;
+    if (!L.visible || !b) continue;
+    const q = L.piece === "sheet" ? at.sheet : at.piece && at.piece.piece === L.piece ? [at.piece.x, at.piece.y] : null;
+    if (!q) continue;
+    const a = (-L.rotate * Math.PI) / 180, dx = q[0] - L.x, dy = q[1] - L.y;
     const lx = dx * Math.cos(a) - dy * Math.sin(a), ly = dx * Math.sin(a) + dy * Math.cos(a);
     if (Math.abs(lx) <= b.w / 2 + margin && Math.abs(ly) <= b.h / 2 + margin) return L;
   }

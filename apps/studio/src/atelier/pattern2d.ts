@@ -1,12 +1,14 @@
 // Atelier vêtement : patron à plat. Chaque pièce reprend sa zone de l'atlas (même texture que le vêtement
 // 3D), découpée selon son contour ; coutures en couleur (épaule, dessus et dessous de manche, côté).
 // Les impressions s'y sélectionnent, se déplacent, tournent et (textes seulement) changent de taille.
-import { type AtelierLayer, type Atlas, hitTest } from "./atlas.js";
-import { ARM_ANGLE, type Garment, type Layout, type PieceId, PX_PER_CM as S, topEdge } from "./garments.js";
+import { type AtelierLayer, type Atlas, pickLayer } from "./atlas.js";
+import { type Garment, type Layout, type PieceId, PX_PER_CM as S, topEdge } from "./garments.js";
+import { type Affine, sheetExtent, sheetPieces, sheetToPiece } from "./sheet.js";
 
 export interface PatternLabels { front: string; back: string; frontInfo: string; backInfo: string; hood: string }
 interface Piece { kind: "body" | "sleeve" | "hood"; piece: PieceId | "plain"; M: DOMMatrix; sgn: number }
-export type LayerPatch = Partial<Pick<AtelierLayer, "x" | "y" | "rotate">> & { width?: number; cap?: number };
+export type LayerPatch = Partial<Pick<AtelierLayer, "x" | "y" | "rotate">> & { width?: number; cap?: number; w?: number; h?: number };
+const dom = (m: Affine) => new DOMMatrix([m.a, m.b, m.c, m.d, m.e, m.f]);
 
 const SEAM = { shoulder: "#c23a2b", sleeveTop: "#2f56c9", underarm: "#d38a2a", side: "#2e8a4f", edge: "#8b97ab" };
 
@@ -27,7 +29,8 @@ export class PatternView {
   private hoodFill = "#fbfcfd";
   private ink = "#1c2742";
   private muted = "#5d6a82";
-  private drag: null | { type: "move" | "rotate" | "resize"; L: AtelierLayer; p: Piece; dx: number; dy: number; d0: number; w0: number; cap0: number } = null;
+  /** p : pièce dans laquelle on agit (calque de pièce), ou null pour la feuille entière (motif continu). */
+  private drag: null | { type: "move" | "rotate" | "resize"; L: AtelierLayer; p: Piece | null; dx: number; dy: number; d0: number; w0: number; h0: number; cap0: number } = null;
   private ro: ResizeObserver;
   private raf = 0;
 
@@ -57,40 +60,23 @@ export class PatternView {
     this.raf = requestAnimationFrame(() => this.draw());
   }
 
-  private extent() {
-    const g = this.g;
-    const reach = Math.sin(ARM_ANGLE) * g.L + (Math.cos(ARM_ANGLE) * g.circ) / 2;
-    const half = g.W / 2 + reach + 2, gap = 8;
-    const drop = Math.cos(ARM_ANGLE) * g.L + 6;
-    return { frontX: half, backX: half * 3 + gap, top: 6, w: half * 4 + gap, h: Math.max(g.H, drop + 4) + (g.hood ? 34 : 0) + 12 };
-  }
-
   fit() {
     if (!this.g) return;
     const r = this.canvas.getBoundingClientRect();
-    const e = this.extent(), pad = 12;
+    const e = sheetExtent(this.g), pad = 12;
     this.scale = Math.max(0.5, Math.min((r.width - pad * 2) / e.w, (r.height - pad * 2) / e.h));
     this.ox = (r.width - e.w * this.scale) / 2;
     this.oy = pad + Math.max(0, (r.height - pad * 2 - e.h * this.scale) / 2);
   }
 
+  /** Écran (px CSS) ← feuille (cm). */
+  private base() {
+    return new DOMMatrix().translate(this.ox, this.oy).scale(this.scale);
+  }
+
   private matrices() {
-    const g = this.g, e = this.extent(), k = this.scale;
-    const base = (x: number, y: number) => new DOMMatrix().translate(this.ox, this.oy).scale(k).translate(x, y);
-    const pieces: Piece[] = [];
-    const deg = (ARM_ANGLE * 180) / Math.PI;
-    for (const [view, cx] of [["front", e.frontX], ["back", e.backX]] as const) {
-      pieces.push({ kind: "body", piece: view, M: base(cx, e.top), sgn: 1 });
-      for (const side of [1, -1]) {
-        // Devant : la manche gauche du porteur est à droite du lecteur ; dos (vue extérieure) : l'inverse.
-        const key: PieceId = view === "front" ? (side > 0 ? "sleeveL" : "sleeveR") : side > 0 ? "sleeveR" : "sleeveL";
-        const sgn = view === "front" ? 1 : -1; // moitié visible du tube : devant (x ≥ 0) ou dos (x ≤ 0)
-        const M = base(cx + side * (g.W / 2 - 1), e.top + 4.2).rotate(side > 0 ? -deg : deg).scale((side > 0 ? -1 : 1) * sgn, 1);
-        pieces.push({ kind: "sleeve", piece: key, M, sgn });
-      }
-    }
-    if (g.hood) pieces.push({ kind: "hood", piece: "plain", M: base((e.frontX + e.backX) / 2, e.top + Math.max(g.H, Math.cos(ARM_ANGLE) * g.L + 8) + 20), sgn: 1 });
-    this.pieces = pieces;
+    const base = this.base();
+    this.pieces = sheetPieces(this.g).map((p) => ({ kind: p.kind, piece: p.piece, M: base.multiply(dom(p.M)), sgn: p.sgn }));
   }
 
   draw() {
@@ -160,19 +146,21 @@ export class PatternView {
       ctx.restore();
       this.label(ctx, dpr, hood.M.transformPoint(new DOMPoint(0, 15.5)), "", this.labels.hood);
     }
-    // Sélection : cadre pointillé, poignée de rotation, poignée de taille (textes).
+    // Sélection : cadre pointillé, poignée de rotation, poignée de taille (textes, images, formes).
     const L = this.layers.find((l) => l.id === this.selected);
     const box = L && this.atlas.boxes.get(L.id);
     if (L && box && L.visible) {
-      for (const p of this.pieces) {
-        if (p.piece !== L.piece || (p.kind === "sleeve" && Math.abs(L.x) > 0.5 && Math.sign(L.x) !== p.sgn)) continue;
-        ctx.setTransform(D.multiply(p.M).translate(L.x, L.y).rotate(L.rotate));
+      const frames = L.piece === "sheet"
+        ? [this.base()]
+        : this.pieces.filter((p) => p.piece === L.piece && !(p.kind === "sleeve" && Math.abs(L.x) > 0.5 && Math.sign(L.x) !== p.sgn)).map((p) => p.M);
+      for (const M of frames) {
+        ctx.setTransform(D.multiply(M).translate(L.x, L.y).rotate(L.rotate));
         ctx.strokeStyle = "#c23a2b"; ctx.lineWidth = 1.2 / k; ctx.setLineDash([4 / k, 3 / k]);
         ctx.strokeRect(-box.w / 2, -box.h / 2, box.w, box.h); ctx.setLineDash([]);
         ctx.beginPath(); ctx.moveTo(0, -box.h / 2); ctx.lineTo(0, -box.h / 2 - 2.6); ctx.stroke();
         ctx.fillStyle = "#fff";
         ctx.beginPath(); ctx.arc(0, -box.h / 2 - 3.2, 4.5 / k, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-        if (L.kind === "text") { ctx.fillRect(box.w / 2 - 3.5 / k, -3.5 / k, 7 / k, 7 / k); ctx.strokeRect(box.w / 2 - 3.5 / k, -3.5 / k, 7 / k, 7 / k); }
+        if (L.kind !== "embroidery") { ctx.fillRect(box.w / 2 - 3.5 / k, -3.5 / k, 7 / k, 7 / k); ctx.strokeRect(box.w / 2 - 3.5 / k, -3.5 / k, 7 / k, 7 / k); }
       }
     }
   }
@@ -186,57 +174,67 @@ export class PatternView {
     ctx.textAlign = "left";
   }
 
-  private toPiece(p: Piece, ev: PointerEvent) {
+  private screen(ev: PointerEvent) {
     const r = this.canvas.getBoundingClientRect();
-    const q = p.M.inverse().transformPoint(new DOMPoint(ev.clientX - r.left, ev.clientY - r.top));
+    return new DOMPoint(ev.clientX - r.left, ev.clientY - r.top);
+  }
+  /** Coordonnées dans une pièce (p) ou sur la feuille (p = null). */
+  private toSpace(p: Piece | null, ev: PointerEvent) {
+    const q = (p ? p.M : this.base()).inverse().transformPoint(this.screen(ev));
     return { x: q.x, y: q.y };
   }
   private local(L: AtelierLayer, q: { x: number; y: number }) {
     const a = (-L.rotate * Math.PI) / 180, dx = q.x - L.x, dy = q.y - L.y;
     return { lx: dx * Math.cos(a) - dy * Math.sin(a), ly: dx * Math.sin(a) + dy * Math.cos(a) };
   }
-  private hitLayer(piece: PieceId | "plain", q: { x: number; y: number }) {
-    return piece === "plain" ? null : hitTest(this.layers, this.atlas.boxes, piece, q.x, q.y);
+  /** Calque sous le pointeur : motifs continus (feuille) et calques de la pièce sous le pointeur. */
+  private pickAt(ev: PointerEvent): { L: AtelierLayer; p: Piece | null } | null {
+    const s = this.toSpace(null, ev);
+    const hit = sheetToPiece(this.g, s.x, s.y);
+    const L = pickLayer(this.layers, this.atlas.boxes, { sheet: [s.x, s.y], piece: hit ? { piece: hit.piece, x: hit.x, y: hit.y } : null });
+    if (!L) return null;
+    if (L.piece === "sheet") return { L, p: null };
+    const p = this.pieces.find((q) => q.piece === hit!.piece && (q.kind === "body" || q.sgn === hit!.at.sgn)) ?? null;
+    return p ? { L, p } : null;
   }
 
   private down = (ev: PointerEvent) => {
     this.canvas.setPointerCapture(ev.pointerId);
     const sel = this.layers.find((l) => l.id === this.selected), box = sel && this.atlas.boxes.get(sel.id);
     if (sel && box) {
-      for (const p of this.pieces) {
-        if (p.piece !== sel.piece) continue;
-        const { lx, ly } = this.local(sel, this.toPiece(p, ev));
+      const spaces: (Piece | null)[] = sel.piece === "sheet" ? [null] : this.pieces.filter((p) => p.piece === sel.piece);
+      for (const p of spaces) {
+        const { lx, ly } = this.local(sel, this.toSpace(p, ev));
         const tol = 7 / this.scale;
-        const w0 = sel.kind === "text" ? sel.width : 0, cap0 = sel.kind === "text" ? sel.cap : 0;
-        if (Math.hypot(lx, ly + box.h / 2 + 3.2) < tol) { this.drag = { type: "rotate", L: sel, p, dx: 0, dy: 0, d0: 1, w0, cap0 }; return; }
-        if (sel.kind === "text" && Math.hypot(lx - box.w / 2, ly) < tol) { this.drag = { type: "resize", L: sel, p, dx: 0, dy: 0, d0: Math.max(0.5, Math.abs(lx)), w0, cap0 }; return; }
+        const w0 = sel.kind === "text" ? sel.width : sel.kind === "image" || sel.kind === "shape" ? sel.w : 0;
+        const h0 = sel.kind === "shape" ? sel.h : 0, cap0 = sel.kind === "text" ? sel.cap : 0;
+        if (Math.hypot(lx, ly + box.h / 2 + 3.2) < tol) { this.drag = { type: "rotate", L: sel, p, dx: 0, dy: 0, d0: 1, w0, h0, cap0 }; return; }
+        if (sel.kind !== "embroidery" && Math.hypot(lx - box.w / 2, ly) < tol) { this.drag = { type: "resize", L: sel, p, dx: 0, dy: 0, d0: Math.max(0.5, Math.abs(lx)), w0, h0, cap0 }; return; }
       }
     }
-    for (const p of [...this.pieces].reverse()) {
-      if (p.kind === "hood") continue;
-      const q = this.toPiece(p, ev), L = this.hitLayer(p.piece, q);
-      if (L && (p.kind !== "sleeve" || Math.sign(q.x) === p.sgn || Math.abs(q.x) < 1)) {
-        this.onPick?.(L.id);
-        this.drag = { type: "move", L, p, dx: L.x - q.x, dy: L.y - q.y, d0: 1, w0: 0, cap0: 0 };
-        this.canvas.style.cursor = "move";
-        return;
-      }
+    const hit = this.pickAt(ev);
+    if (hit) {
+      const q = this.toSpace(hit.p, ev);
+      this.onPick?.(hit.L.id);
+      this.drag = { type: "move", L: hit.L, p: hit.p, dx: hit.L.x - q.x, dy: hit.L.y - q.y, d0: 1, w0: 0, h0: 0, cap0: 0 };
+      this.canvas.style.cursor = "move";
     }
   };
   private move = (ev: PointerEvent) => {
     const d = this.drag;
     if (!d) {
-      const over = this.pieces.some((p) => p.kind !== "hood" && this.hitLayer(p.piece, this.toPiece(p, ev)));
-      this.canvas.style.cursor = over ? "move" : "";
+      this.canvas.style.cursor = this.pickAt(ev) ? "move" : "";
       return;
     }
-    const q = this.toPiece(d.p, ev);
+    const q = this.toSpace(d.p, ev);
     if (d.type === "move") this.onEdit?.(d.L.id, { x: q.x + d.dx, y: q.y + d.dy });
     else if (d.type === "rotate") this.onEdit?.(d.L.id, { rotate: Math.round((Math.atan2(q.x - d.L.x, -(q.y - d.L.y)) * 180) / Math.PI) });
     else {
       const f = Math.max(0.5, this.local(d.L, q).lx) / d.d0;
       if (d.L.kind === "text" && d.L.layout === "arc") this.onEdit?.(d.L.id, { cap: Math.max(0.3, Math.min(12, d.cap0 * f)) });
-      else this.onEdit?.(d.L.id, { width: Math.max(2, Math.min(60, d.w0 * f)) });
+      else if (d.L.kind === "text") this.onEdit?.(d.L.id, { width: Math.max(2, Math.min(60, d.w0 * f)) });
+      else if (d.L.kind === "image") this.onEdit?.(d.L.id, { w: Math.max(1, Math.min(160, d.w0 * f)) });
+      else if (d.L.kind === "shape") this.onEdit?.(d.L.id, { w: Math.max(0.5, Math.min(220, d.w0 * f)), h: Math.max(0.5, Math.min(220, d.h0 * f)) });
     }
   };
   private up = () => {

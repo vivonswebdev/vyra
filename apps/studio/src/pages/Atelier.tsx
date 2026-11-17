@@ -14,8 +14,9 @@ import { analyze, planBounds, type Design } from "@vyra/engine";
 import { renderPlan } from "@vyra/engine/browser";
 import { get, Icon, Segmented, Spinner, useErrorText, useI18n, useToast } from "@vyra/ui";
 import type { ProjectDTO } from "@vyra/shared";
-import { Atlas, FONTS, fontOf, hitTest, type AtelierLayer, type EmbroideryArt, type PrintType, type RenderMode, type TextLayer } from "../atelier/atlas.js";
-import { AUTO_INK_DARK, autoInk, clampToPiece, GARMENTS, layoutFor, PIECES, type GarmentId, type PieceId } from "../atelier/garments.js";
+import { Atlas, FONTS, fontOf, pickLayer, type AtelierLayer, type EmbroideryArt, type ImageLayer, type Placement, type PrintType, type RenderMode, type ShapeLayer, type TextLayer } from "../atelier/atlas.js";
+import { clampToSheet, pieceToSheet, sheetExtent, sheetToPiece } from "../atelier/sheet.js";
+import { AUTO_INK_DARK, autoInk, clampToPiece, GARMENTS, layoutFor, PIECES, type Garment, type GarmentId, type Layout, type PieceId } from "../atelier/garments.js";
 import { PatternView, type LayerPatch } from "../atelier/pattern2d.js";
 import { GarmentScene, type CameraView, type SceneStats } from "../atelier/scene.js";
 
@@ -33,7 +34,9 @@ function loadSaved(id: string): Saved | null {
     if (!raw) return null;
     const s = JSON.parse(raw) as Saved;
     if (!(s.garment in GARMENTS) || !Array.isArray(s.layers)) return null;
-    s.layers = s.layers.filter((l) => (l.kind === "text" || l.kind === "embroidery") && PIECES.includes(l.piece));
+    s.layers = s.layers.filter((l) =>
+      ((l.kind === "text" || l.kind === "embroidery") && PIECES.includes(l.piece as PieceId)) ||
+      ((l.kind === "image" || l.kind === "shape") && (l.piece === "sheet" || PIECES.includes(l.piece as PieceId))));
     return s;
   } catch {
     return null;
@@ -56,6 +59,39 @@ function embroideryArt(project: ProjectDTO | null): EmbroideryArt | null {
   renderPlan(canvas.getContext("2d")!, plan, { scale: k, ox: -b.minX * k, oy: -b.minY * k }, { realistic: true, showJumps: false });
   return { canvas, wCm: wMm / 10, hCm: hMm / 10 };
 }
+
+/** Garde un calque dans son emplacement : sa pièce, ou la feuille entière pour un motif continu. */
+function clampLayer(g: Garment, layout: Layout, L: AtelierLayer, box?: { w: number; h: number }): [number, number] {
+  if (L.piece === "sheet") return clampToSheet(g, L.x, L.y);
+  return clampToPiece(layout, L.piece, L.x, L.y, L.kind === "embroidery" ? box?.w : 0, L.kind === "embroidery" ? box?.h : 0);
+}
+
+/** Image choisie par l'utilisateur → réduite (1 600 px au plus) et encodée, gardée dans le navigateur. */
+async function importImage(file: File): Promise<{ src: string; aspect: number } | null> {
+  if (!/^image\/(png|jpeg|webp)$/.test(file.type) || file.size > 15 * 1024 * 1024) return null;
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    if (!img.naturalWidth || !img.naturalHeight) return null;
+    const k = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(img.naturalWidth * k));
+    c.height = Math.max(1, Math.round(img.naturalHeight * k));
+    c.getContext("2d")!.drawImage(img, 0, 0, c.width, c.height);
+    // PNG et WEBP peuvent être transparents : gardés en PNG ; les photos (JPG) restent en JPG, plus légères.
+    const src = file.type === "image/jpeg" ? c.toDataURL("image/jpeg", 0.9) : c.toDataURL("image/png");
+    return { src, aspect: c.height / c.width };
+  } catch {
+    return null;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+type LayerFields = Partial<Omit<TextLayer, "kind">> & Partial<Omit<ImageLayer, "kind">> & Partial<Omit<ShapeLayer, "kind">>;
+const SHAPES = ["rect", "triangle", "circle"] as const;
 
 let nextId = 1;
 const newId = (layers: AtelierLayer[]) => Math.max(nextId++, ...layers.map((l) => l.id + 1));
@@ -143,6 +179,11 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
   layersRef.current = layers;
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
+  const garmentRef = useRef(garment);
+  garmentRef.current = garment;
+  const fileInput = useRef<HTMLInputElement>(null);
+  // Images décodées des calques image (par identifiant de calque).
+  const [images, setImages] = useState(() => new Map<number, HTMLImageElement>());
   const moveOffset = useRef<{ id: number; dx: number; dy: number } | null>(null);
 
   const fmt = useCallback((v: number, d = 1) => v.toLocaleString(lang, { minimumFractionDigits: d, maximumFractionDigits: d }), [lang]);
@@ -152,8 +193,7 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
     setLayers((ls) => ls.map((l) => {
       if (l.id !== lid) return l;
       const n = { ...l, ...patch } as AtelierLayer;
-      const box = atlas.boxes.get(lid);
-      [n.x, n.y] = clampToPiece(layoutRef.current, n.piece, n.x, n.y, n.kind === "embroidery" ? box?.w : 0, n.kind === "embroidery" ? box?.h : 0);
+      [n.x, n.y] = clampLayer(garmentRef.current, layoutRef.current, n, atlas.boxes.get(lid));
       return n;
     }));
   }, [atlas]);
@@ -170,17 +210,22 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
       sc.onStats = setStats;
       sc.onViewChange = setView;
       sc.onPrint = (phase, at) => {
+        // Le point touché est connu dans sa pièce et sur la feuille : un motif continu se déplace sur la feuille.
+        const sheetAt = (a: NonNullable<typeof at>) => pieceToSheet(garmentRef.current, a.piece, a.x, a.y);
         if (phase === "down") {
           if (!at) return false;
-          const hit = hitTest(layersRef.current, atlas.boxes, at.piece, at.x, at.y);
+          const [sx, sy] = sheetAt(at);
+          const hit = pickLayer(layersRef.current, atlas.boxes, { sheet: [sx, sy], piece: at });
           if (!hit) return false;
           setSelected(hit.id);
-          moveOffset.current = { id: hit.id, dx: hit.x - at.x, dy: hit.y - at.y };
+          const [qx, qy] = hit.piece === "sheet" ? [sx, sy] : [at.x, at.y];
+          moveOffset.current = { id: hit.id, dx: hit.x - qx, dy: hit.y - qy };
           return true;
         }
         if (phase === "move" && at && moveOffset.current) {
           const m = moveOffset.current, L = layersRef.current.find((l) => l.id === m.id);
-          if (L && L.piece === at.piece) edit(m.id, { x: at.x + m.dx, y: at.y + m.dy });
+          if (L?.piece === "sheet") { const [sx, sy] = sheetAt(at); edit(m.id, { x: sx + m.dx, y: sy + m.dy }); }
+          else if (L && L.piece === at.piece) edit(m.id, { x: at.x + m.dx, y: at.y + m.dy });
         }
         if (phase === "up") moveOffset.current = null;
       };
@@ -204,8 +249,7 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
   useEffect(() => {
     scene.current?.setGarment(garment, layout);
     setLayers((ls) => ls.map((l) => {
-      const box = atlas.boxes.get(l.id);
-      const [x, y] = clampToPiece(layout, l.piece, l.x, l.y, l.kind === "embroidery" ? box?.w : 0, l.kind === "embroidery" ? box?.h : 0);
+      const [x, y] = clampLayer(garment, layout, l, atlas.boxes.get(l.id));
       return x === l.x && y === l.y ? l : { ...l, x, y };
     }));
   }, [garment, layout, atlas]);
@@ -218,10 +262,22 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
     s.setRelief(printType === "puff");
   }, [mode, turntable, breeze, render, colorway, printType]);
 
+  // Images des calques : décodées une fois (y compris celles gardées dans ce navigateur), puis texture redessinée.
+  useEffect(() => {
+    let alive = true;
+    for (const l of layers) {
+      if (l.kind !== "image" || images.has(l.id)) continue;
+      const img = new Image();
+      img.src = l.src;
+      img.decode().then(() => alive && setImages((m) => (m.has(l.id) ? m : new Map(m).set(l.id, img))), () => {});
+    }
+    return () => { alive = false; };
+  }, [layers, images]);
+
   // Texture et patron : redessinés à chaque changement.
   useEffect(() => {
     atlas.render({
-      garment, layout, render, colorway, printType, layers, embroidery: art,
+      garment, layout, render, colorway, printType, layers, embroidery: art, images,
       labels: { front: t("at.sheetFront", { fabric: fabric.toUpperCase() }), back: t("at.sheetBack", { fabric: fabric.toUpperCase() }) },
     });
     const pv = pattern.current;
@@ -236,7 +292,7 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
       });
       setScale2d(pv.scale);
     }
-  }, [atlas, garment, layout, render, colorway, printType, layers, art, selected, fontsTick, t, fabric]);
+  }, [atlas, garment, layout, render, colorway, printType, layers, art, images, selected, fontsTick, t, fabric]);
 
   useEffect(() => {
     try {
@@ -248,10 +304,32 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
 
   const sel = layers.find((l) => l.id === selected) ?? null;
   const box = sel ? atlas.boxes.get(sel.id) : undefined;
-  const patch = (p: Partial<TextLayer>) => sel && setLayers((ls) => ls.map((l) => (l.id === sel.id ? ({ ...l, ...p } as AtelierLayer) : l)));
+  const patch = (p: LayerFields) => sel && setLayers((ls) => ls.map((l) => (l.id === sel.id ? ({ ...l, ...p } as AtelierLayer) : l)));
   const add = (L: AtelierLayer) => { setLayers((ls) => [...ls, L]); setSelected(L.id); };
   const addEmbroidery = () => art && add({ id: newId(layers), kind: "embroidery", piece: "front", x: 0, y: garment.neckDrop + 6 + art.hCm / 2, rotate: 0, visible: true });
   const addText = () => add({ id: newId(layers), kind: "text", piece: "front", x: 0, y: Math.min(garment.H - 12, 38), rotate: 0, visible: true, text: t("at.newText"), font: "anton", layout: "box", align: "center", cap: 2.4, width: 26, bend: 0.3, leading: 1.15, tracking: 0.02, ink: autoInk(background), autoInk: true, opacity: 1 });
+  const extent = sheetExtent(garment);
+  const addImage = async (file: File) => {
+    const im = await importImage(file);
+    if (!im) { toast(t("at.imageError")); return; }
+    const w = Math.min(24, garment.W * 0.6);
+    add({ id: newId(layers), kind: "image", piece: "front", x: 0, y: Math.min(garment.H - 6, garment.neckDrop + 8 + (w * im.aspect) / 2), rotate: 0, visible: true, src: im.src, name: file.name.slice(0, 60), w, aspect: im.aspect, opacity: 1 });
+  };
+  // Forme par défaut : une bande sur toute la feuille, donc tout le tour du vêtement (devant, manches, dos).
+  const addShape = () => add({ id: newId(layers), kind: "shape", piece: "sheet", shape: "rect", x: extent.w / 2, y: extent.top + Math.min(40, garment.H * 0.55), rotate: 0, visible: true, w: extent.w, h: 6, fill: "#c23a2b", opacity: 1 });
+  /** Change l'emplacement d'un calque en gardant sa position sur le vêtement quand c'est possible. */
+  const place = (L: AtelierLayer, to: Placement) => {
+    if (to === L.piece) return;
+    if (to === "sheet") {
+      const [x, y] = pieceToSheet(garment, L.piece as PieceId, L.x, L.y);
+      patch({ piece: "sheet", x, y });
+      return;
+    }
+    const at = L.piece === "sheet" ? sheetToPiece(garment, L.x, L.y) : null;
+    if (at && at.piece === to) { patch({ piece: to, x: at.x, y: at.y }); return; }
+    const r = layout.regions[to], sleeve = to.startsWith("sleeve");
+    patch({ piece: to, x: sleeve ? r.w / 8 : 0, y: Math.min(L.piece === "sheet" ? r.h * 0.4 : L.y, r.h * 0.5), rotate: sleeve ? 90 : 0 });
+  };
   const reorder = (dir: 1 | -1) => setLayers((ls) => {
     const i = ls.findIndex((l) => l.id === selected), j = i + dir;
     if (i < 0 || j < 0 || j >= ls.length) return ls;
@@ -259,7 +337,9 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
     [n[i], n[j]] = [n[j], n[i]];
     return n;
   });
-  const layerName = (l: AtelierLayer) => (l.kind === "embroidery" ? t("at.embroidery") : l.text.replace(/\s+/g, " ") || t("at.text"));
+  const layerName = (l: AtelierLayer) =>
+    l.kind === "embroidery" ? t("at.embroidery") : l.kind === "image" ? l.name || t("at.image") : l.kind === "shape" ? t("at.sh." + l.shape) : l.text.replace(/\s+/g, " ") || t("at.text");
+  const layerIcon = (l: AtelierLayer) => (l.kind === "embroidery" ? "✶" : l.kind === "image" ? "▣" : l.kind === "shape" ? "◆" : "T");
   const cm = (v: number) => `${fmt(v)} cm`;
 
   return (
@@ -289,6 +369,10 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
             <div className="at-row2">
               <button type="button" className="btn sm" onClick={addEmbroidery} disabled={!art} data-testid="at-add-emb">{t("at.addEmb")}</button>
               <button type="button" className="btn sm" onClick={addText} data-testid="at-add-text">{t("at.addText")}</button>
+              <button type="button" className="btn sm" onClick={() => fileInput.current?.click()} data-testid="at-add-image">{t("at.addImage")}</button>
+              <button type="button" className="btn sm" onClick={addShape} data-testid="at-add-shape">{t("at.addShape")}</button>
+              <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp" hidden data-testid="at-image-file"
+                onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void addImage(f); }} />
             </div>
             {!art && <p className="small muted">{t("at.embEmpty")}</p>}
           </Section>
@@ -297,7 +381,7 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
               {[...layers].reverse().map((l) => (
                 <li key={l.id} className={l.id === selected ? "sel" : ""}>
                   <button type="button" className="at-layer" onClick={() => setSelected(l.id)} aria-pressed={l.id === selected}>
-                    <span aria-hidden="true">{l.kind === "embroidery" ? "✶" : "T"}</span>
+                    <span aria-hidden="true">{layerIcon(l)}</span>
                     <span className="nm">{layerName(l)}</span>
                     <span className="pc">{t("at.pc." + l.piece)}</span>
                   </button>
@@ -310,15 +394,32 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
           <Section title={t("at.selected")}>
             {!sel ? <p className="small muted">{t("at.none")}</p> : (
               <div className="at-props" data-testid="at-props">
-                <Segmented label={t("at.piece")} value={sel.piece} options={PIECES.map((p) => ({ id: p, label: t("at.pc." + p) }))}
-                  onChange={(p: PieceId) => {
-                    const r = layout.regions[p], sleeve = p.startsWith("sleeve");
-                    patch({ piece: p, x: sleeve ? r.w / 8 : 0, y: Math.min(sel.y, r.h * 0.5), rotate: sleeve ? 90 : 0 });
-                  }} />
-                <p className="small muted num">{t("at.coords", { x: fmt(sel.x), y: fmt(sel.y) })}</p>
-                {sel.kind === "embroidery" ? (
+                <Segmented label={t("at.piece")} value={sel.piece} onChange={(p: Placement) => place(sel, p)}
+                  options={[...PIECES.map((p) => ({ id: p as Placement, label: t("at.pc." + p) })), ...(sel.kind === "embroidery" ? [] : [{ id: "sheet" as Placement, label: t("at.pc.sheet") }])]} />
+                {sel.piece === "sheet" ? <p className="small muted">{t("at.sheetHint")}</p> : <p className="small muted num">{t("at.coords", { x: fmt(sel.x), y: fmt(sel.y) })}</p>}
+                {sel.kind === "embroidery" && (
                   <p className="small">{t("at.embSize", { w: fmt(box?.w ?? art?.wCm ?? 0), h: fmt(box?.h ?? art?.hCm ?? 0) })}</p>
-                ) : (
+                )}
+                {sel.kind === "image" && (
+                  <>
+                    <Range id="at-img-w" label={t("at.size")} min={1} max={160} step={0.5} value={sel.w} format={(v) => `${fmt(v)} × ${fmt(v * sel.aspect)} cm`} onChange={(v) => patch({ w: v })} />
+                    <Range id="at-opacity" label={t("at.opacity")} min={0.1} max={1} step={0.01} value={sel.opacity} format={(v) => `${Math.round(v * 100)} %`} onChange={(v) => patch({ opacity: v })} />
+                    <p className="small muted">{t("at.imageNote")}</p>
+                  </>
+                )}
+                {sel.kind === "shape" && (
+                  <>
+                    <Segmented label={t("at.shape")} value={sel.shape} onChange={(v) => patch({ shape: v })} options={SHAPES.map((k) => ({ id: k, label: t("at.sh." + k) }))} />
+                    <Range id="at-sh-w" label={t("at.shW")} min={0.5} max={220} step={0.5} value={sel.w} format={cm} onChange={(v) => patch({ w: v })} />
+                    <Range id="at-sh-h" label={t("at.shH")} min={0.5} max={220} step={0.5} value={sel.h} format={cm} onChange={(v) => patch({ h: v })} />
+                    <div className="at-inks" role="group" aria-label={t("at.fill")}>
+                      {INKS.map((c) => <button key={c} type="button" className="at-sw" style={{ background: c }} aria-label={`${t("at.fill")} ${c}`} aria-pressed={c === sel.fill} onClick={() => patch({ fill: c })} />)}
+                      <input type="color" id="at-fill" value={sel.fill} aria-label={t("at.fill")} onChange={(e) => patch({ fill: e.target.value })} />
+                    </div>
+                    <Range id="at-opacity" label={t("at.opacity")} min={0.1} max={1} step={0.01} value={sel.opacity} format={(v) => `${Math.round(v * 100)} %`} onChange={(v) => patch({ opacity: v })} />
+                  </>
+                )}
+                {sel.kind === "text" && (
                   <>
                     <label className="at-field">
                       <span>{t("at.text")}</span>
@@ -349,8 +450,8 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
                 )}
                 <Range id="at-rotate" label={t("at.rotate")} min={-180} max={180} step={1} value={sel.rotate} format={(v) => `${Math.round(v)}°`} onChange={(v) => patch({ rotate: v })} />
                 <div className="at-row2">
-                  <button type="button" className="btn sm" onClick={() => edit(sel.id, { x: sel.piece.startsWith("sleeve") ? layout.regions[sel.piece].w / 8 : 0 })}>{t("at.center")}</button>
-                  <button type="button" className="btn sm" onClick={() => add({ ...sel, id: newId(layers), y: Math.min(sel.y + 4, layout.regions[sel.piece].h - 2) })}>{t("at.duplicate")}</button>
+                  <button type="button" className="btn sm" onClick={() => edit(sel.id, { x: sel.piece === "sheet" ? (sel.x < (extent.frontX + extent.backX) / 2 ? extent.frontX : extent.backX) : sel.piece.startsWith("sleeve") ? layout.regions[sel.piece].w / 8 : 0 })}>{t("at.center")}</button>
+                  <button type="button" className="btn sm" onClick={() => add({ ...sel, id: newId(layers), y: Math.min(sel.y + 4, sel.piece === "sheet" ? extent.h - 2 : layout.regions[sel.piece].h - 2) })}>{t("at.duplicate")}</button>
                   <button type="button" className="btn sm" onClick={() => reorder(1)}>{t("at.forward")}</button>
                   <button type="button" className="btn sm" onClick={() => reorder(-1)}>{t("at.backward")}</button>
                   <button type="button" className="btn sm danger" onClick={() => { setLayers((ls) => ls.filter((l) => l.id !== sel.id)); setSelected(null); toast(t("at.deleted")); }}>{t("at.delete")}</button>
