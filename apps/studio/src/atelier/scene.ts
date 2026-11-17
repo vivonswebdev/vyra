@@ -34,6 +34,7 @@ export class GarmentScene {
   private layout!: Layout;
   private cam = { theta: 0, phi: 0.08, dist: 230, goal: null as number | null };
   private target = new THREE.Vector3(0, -36, 0);
+  private fit = 1;
   private raf = 0;
   private last = performance.now();
   private texVersion = -1;
@@ -84,6 +85,11 @@ export class GarmentScene {
   setGarment(g: Garment, layout: Layout) {
     this.g = g;
     this.layout = layout;
+    // Cadrage : la capuche relevée dépasse de 30 cm au-dessus des épaules ; la caméra remonte et recule un peu
+    // pour la montrer entière sous l'en-tête de la vue.
+    this.target.y = g.hood ? -24 : -36;
+    this.fit = g.hood ? 1.18 : 1;
+    this.resize();
     this.sim = buildCloth(g);
     for (const m of [...this.meshes, ...this.cordMeshes, ...this.extra]) { this.scene.remove(m); m.geometry.dispose(); }
     this.meshes = []; this.cordMeshes = []; this.extra = [];
@@ -95,7 +101,7 @@ export class GarmentScene {
       this.meshes.push(this.grid(sl.cols, sl.rows, (k, j) => sl.idx[j * sl.cols + k], (k, j) => [((r.x0 + (k / sl.cols) * r.w) * S) / W, 1 - ((j / sl.rows) * r.h * S) / H]));
     }
     if (g.hood) {
-      const cu = 26, cv = 14, p = layout.regions.plain, pos: number[] = [], uv: number[] = [], idx: number[] = [];
+      const cu = 40, cv = 16, p = layout.regions.plain, pos: number[] = [], uv: number[] = [], idx: number[] = [];
       for (let j = 0; j <= cv; j++) for (let i = 0; i <= cu; i++) {
         pos.push(...hoodPoint(g, i / cu, j / cv));
         uv.push(((p.x0 + 2 + (i / cu) * (p.w - 4)) * S) / W, 1 - ((p.y0 + 2 + (j / cv) * (p.h - 4)) * S) / H);
@@ -209,7 +215,7 @@ export class GarmentScene {
     this.renderer.setSize(r.width, r.height, false);
     this.camera.aspect = r.width / r.height;
     this.camera.updateProjectionMatrix();
-    this.cam.dist = Math.max(210, (240 / Math.min(1, this.camera.aspect)) * 0.92);
+    this.cam.dist = Math.max(210, (240 / Math.min(1, this.camera.aspect)) * 0.92) * this.fit;
   }
 
   private frame(now: number) {

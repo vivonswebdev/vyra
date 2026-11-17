@@ -1058,7 +1058,33 @@
   .at-stats {
     display: none;
   }
-  .at-cams {
-    top: 100px;
+  /* Petit écran : les commandes de la vue 3D ne recouvrent plus le vêtement. En-tête et commandes forment
+     deux bandes au-dessus du dessin, qui occupe le reste de la vue. */
+  .at-v3 {
+    display: flex;
+    flex-direction: column;
+  }
+  .at-v3 .at-vhead {
+    position: static;
+  }
+  .at-v3 .at-cams {
+    position: static;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+  }
+  .at-v3 .at-canvas {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+  }
+  .at-v3 .at-overlay {
+    position: static;
+    margin: 10px;
   }
 }

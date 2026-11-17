@@ -247,15 +247,25 @@ function collide(sim: Sim) {
   }
 }
 
-/** Point de la capuche baissée (statique) : u fait le tour de l'encolure (épaule → dos → épaule), v descend. */
+/**
+ * Point de la capuche relevée (statique), comme sur une photo de produit en forme fantôme : la capuche part de
+ * toute l'encolure, monte en coque derrière l'emplacement de la tête et s'ouvre vers l'avant, ses deux bords se
+ * rejoignant au milieu devant de l'encolure. u fait le tour (bord gauche → dos → bord droit) ; v va de l'encolure
+ * (0) au bord de l'ouverture (1). Vue de face, l'ouverture encadre l'encolure : le hoodie se distingue du sweat.
+ */
 export function hoodPoint(g: Garment, u: number, v: number): [number, number, number] {
-  const a = Math.PI * (0.08 + 0.84 * u);
-  const ny = -1.5 - g.neckDropBack * 0.5;
-  const bx = Math.cos(a) * 10.2, bz = -Math.sin(a) * 8.6;
-  const out = Math.sin(v * Math.PI * 0.95);
-  return [
-    bx * (1 - 0.5 * v) * (1 + 0.25 * out),
-    ny + 2.5 * Math.sin(v * Math.PI * 0.6) - 22 * Math.pow(v, 1.3),
-    bz * (1 + 0.6 * out) - (9 * out + 6.5 * v) * Math.sin(a) - 1.5,
-  ];
+  const b = 0.03 + 0.94 * u; // petit écart au milieu devant : les deux bords de l'ouverture
+  const a = 2 * Math.PI * b; // 0 = milieu devant, π = milieu dos
+  const front = (1 + Math.cos(a)) / 2; // 1 devant, 0 dos
+  // Encolure (couture capuche-corps), un peu plus large que celle du corps.
+  const neckY = -1.5 - (g.neckDropBack + (g.neckDrop - g.neckDropBack) * front);
+  const N = [-10.8 * Math.sin(a), neckY, 9.4 * Math.cos(a)];
+  // Bord de l'ouverture : ovale presque vertical, tourné vers l'avant, dont le bas rejoint l'encolure devant.
+  const oy = 19, cy = -1.5 - g.neckDrop + 1 + oy;
+  const F = [-10.5 * Math.sin(a), cy - oy * Math.cos(a), 4.8 - 2.6 * (1 - front)];
+  // Volume : la coque se gonfle vers l'arrière et vers le haut, surtout au dos.
+  const t = v, bulge = Math.sin(Math.PI * t) * (2.5 + 7.5 * (1 - front));
+  const P = [N[0] + (F[0] - N[0]) * t, N[1] + (F[1] - N[1]) * t, N[2] + (F[2] - N[2]) * t];
+  const dx = P[0], dy = P[1] - 6, dz = P[2] + 3, n = Math.hypot(dx, dy, dz) || 1;
+  return [P[0] + (dx / n) * bulge, P[1] + (dy / n) * bulge, P[2] + (dz / n) * bulge];
 }

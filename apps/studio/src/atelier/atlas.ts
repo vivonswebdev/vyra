@@ -30,6 +30,8 @@ export interface TextLayer extends LayerBase {
   leading: number;
   tracking: number;
   ink: string;
+  /** Encre choisie automatiquement (lisible sur le fond) : elle suit la couleur du vêtement. Faux dès qu'une encre est choisie à la main. */
+  autoInk?: boolean;
   opacity: number;
 }
 export interface EmbroideryLayer extends LayerBase { kind: "embroidery" }

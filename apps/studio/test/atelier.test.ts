@@ -1,7 +1,7 @@
 // Atelier vêtement : géométrie des pièces et simulation du tissu (sans DOM ni WebGL).
 import { describe, expect, it } from "vitest";
-import { atlasToPiece, clampToPiece, GARMENTS, layoutFor, pieceToAtlas, topEdge, type GarmentId } from "../src/atelier/garments.js";
-import { bodyAt, buildCloth, redrape, step } from "../src/atelier/cloth.js";
+import { atlasToPiece, AUTO_INK_DARK, AUTO_INK_LIGHT, autoInk, clampToPiece, contrast, GARMENTS, layoutFor, pieceToAtlas, topEdge, type GarmentId } from "../src/atelier/garments.js";
+import { bodyAt, buildCloth, hoodPoint, redrape, step } from "../src/atelier/cloth.js";
 
 const IDS = Object.keys(GARMENTS) as GarmentId[];
 
@@ -85,4 +85,31 @@ describe("atelier : simulation du tissu", () => {
     for (let k = 0; k < 240; k++) step(sim, 1 / 120);
     expect(sim.pos[i * 3 + 1]).toBeLessThan(lifted - 5);
   }, 30_000);
+});
+
+describe("atelier : capuche relevée et encre lisible", () => {
+  it("la capuche monte au-dessus de l'encolure, s'ouvre vers l'avant et se voit de face autour de l'encolure", () => {
+    const g = GARMENTS.hoodie;
+    const pts: [number, number, number][] = [];
+    for (let i = 0; i <= 20; i++) for (let j = 0; j <= 10; j++) pts.push(hoodPoint(g, i / 20, j / 10));
+    const top = Math.max(...pts.map((p) => p[1]));
+    expect(top).toBeGreaterThan(20); // haut de la capuche bien au-dessus de la ligne d'épaule (y = 0)
+    // Bas de la capuche (v = 0) : sur l'encolure, plus bas devant qu'au dos.
+    expect(hoodPoint(g, 0, 0)[1]).toBeLessThan(hoodPoint(g, 0.5, 0)[1]);
+    // L'ouverture (v = 1) est devant le dos de la capuche, et son sommet est en haut.
+    expect(hoodPoint(g, 0.5, 1)[2]).toBeGreaterThan(hoodPoint(g, 0.5, 0.5)[2]);
+    expect(hoodPoint(g, 0.5, 1)[1]).toBeCloseTo(top, 0);
+    // Vue de face : de la matière à gauche et à droite au-dessus de l'épaule (elle encadre l'encolure).
+    expect(pts.some((p) => p[1] > 5 && p[0] < -8)).toBe(true);
+    expect(pts.some((p) => p[1] > 5 && p[0] > 8)).toBe(true);
+    for (const p of pts) expect(p.every(Number.isFinite)).toBe(true);
+  });
+
+  it("l'encre automatique reste lisible sur chaque couleur de vêtement et sur le plan", () => {
+    const backgrounds = ["#fbfcfd", "#f4f2ec", "#b9bdc3", "#1b1c20", "#1f2d4f", "#2f4f3e", "#7e2b2e", "#b9aed8", "#d6b45a"];
+    for (const bg of backgrounds) expect(contrast(autoInk(bg), bg), bg).toBeGreaterThanOrEqual(3);
+    expect(autoInk("#1f2d4f")).toBe(AUTO_INK_LIGHT); // marine : encre claire (le texte marine y était invisible)
+    expect(autoInk("#f4f2ec")).toBe(AUTO_INK_DARK);
+    expect(contrast(AUTO_INK_DARK, "#1f2d4f")).toBeLessThan(1.5); // le défaut corrigé, mesuré
+  });
 });

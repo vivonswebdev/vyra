@@ -15,7 +15,7 @@ import { renderPlan } from "@vyra/engine/browser";
 import { get, Icon, Segmented, Spinner, useErrorText, useI18n, useToast } from "@vyra/ui";
 import type { ProjectDTO } from "@vyra/shared";
 import { Atlas, FONTS, fontOf, hitTest, type AtelierLayer, type EmbroideryArt, type PrintType, type RenderMode, type TextLayer } from "../atelier/atlas.js";
-import { clampToPiece, GARMENTS, layoutFor, PIECES, type GarmentId, type PieceId } from "../atelier/garments.js";
+import { AUTO_INK_DARK, autoInk, clampToPiece, GARMENTS, layoutFor, PIECES, type GarmentId, type PieceId } from "../atelier/garments.js";
 import { PatternView, type LayerPatch } from "../atelier/pattern2d.js";
 import { GarmentScene, type CameraView, type SceneStats } from "../atelier/scene.js";
 
@@ -108,10 +108,23 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
     const g = GARMENTS.tee;
     const out: AtelierLayer[] = [];
     if (art) out.push({ id: 1, kind: "embroidery", piece: "front", x: 0, y: g.neckDrop + 6 + art.hCm / 2, rotate: 0, visible: true });
-    out.push({ id: 2, kind: "text", piece: "back", x: 0, y: 9, rotate: 0, visible: true, text: project.name.toUpperCase(), font: "mono", layout: "box", align: "center", cap: 0.7, width: 30, bend: 0.3, leading: 1.2, tracking: 0.12, ink: "#1f2c5c", opacity: 1 });
+    out.push({ id: 2, kind: "text", piece: "back", x: 0, y: 9, rotate: 0, visible: true, text: project.name.toUpperCase(), font: "mono", layout: "box", align: "center", cap: 0.7, width: 30, bend: 0.3, leading: 1.2, tracking: 0.12, ink: AUTO_INK_DARK, autoInk: true, opacity: 1 });
     return out;
   });
   const [selected, setSelected] = useState<number | null>(() => layers[0]?.id ?? null);
+  // Fond réellement visible sous les textes : le plan est presque blanc, le rendu tissu prend la couleur choisie.
+  const background = render === "blueprint" ? "#fbfcfd" : colorway;
+  // Une encre automatique (jamais une encre choisie à la main) suit le fond, pour que le texte reste lisible :
+  // un texte bleu marine sur un sweat marine devenait invisible.
+  useEffect(() => {
+    const ink = autoInk(background);
+    // Calques enregistrés avant l'indicateur : l'ancienne encre par défaut (marine) est traitée comme automatique.
+    const isAuto = (l: AtelierLayer) => l.kind === "text" && (l.autoInk ?? l.ink === AUTO_INK_DARK);
+    setLayers((ls) => (ls.some((l) => isAuto(l) && (l as { ink: string }).ink !== ink)
+      ? ls.map((l) => (isAuto(l) ? { ...l, ink, autoInk: true } : l))
+      : ls));
+  }, [background]);
+
   const [mode, setMode] = useState<"pull" | "move">("pull");
   const [turntable, setTurntable] = useState(false);
   const [breeze, setBreeze] = useState(false);
@@ -238,7 +251,7 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
   const patch = (p: Partial<TextLayer>) => sel && setLayers((ls) => ls.map((l) => (l.id === sel.id ? ({ ...l, ...p } as AtelierLayer) : l)));
   const add = (L: AtelierLayer) => { setLayers((ls) => [...ls, L]); setSelected(L.id); };
   const addEmbroidery = () => art && add({ id: newId(layers), kind: "embroidery", piece: "front", x: 0, y: garment.neckDrop + 6 + art.hCm / 2, rotate: 0, visible: true });
-  const addText = () => add({ id: newId(layers), kind: "text", piece: "front", x: 0, y: Math.min(garment.H - 12, 38), rotate: 0, visible: true, text: t("at.newText"), font: "anton", layout: "box", align: "center", cap: 2.4, width: 26, bend: 0.3, leading: 1.15, tracking: 0.02, ink: "#1f2c5c", opacity: 1 });
+  const addText = () => add({ id: newId(layers), kind: "text", piece: "front", x: 0, y: Math.min(garment.H - 12, 38), rotate: 0, visible: true, text: t("at.newText"), font: "anton", layout: "box", align: "center", cap: 2.4, width: 26, bend: 0.3, leading: 1.15, tracking: 0.02, ink: autoInk(background), autoInk: true, opacity: 1 });
   const reorder = (dir: 1 | -1) => setLayers((ls) => {
     const i = ls.findIndex((l) => l.id === selected), j = i + dir;
     if (i < 0 || j < 0 || j >= ls.length) return ls;
@@ -328,8 +341,8 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
                     {sel.layout !== "arc" && <Range id="at-leading" label={t("at.leading")} min={0.7} max={2.2} step={0.01} value={sel.leading} format={(v) => fmt(v, 2)} onChange={(v) => patch({ leading: v })} />}
                     <Range id="at-tracking" label={t("at.tracking")} min={-0.08} max={0.5} step={0.01} value={sel.tracking} format={(v) => fmt(v, 2)} onChange={(v) => patch({ tracking: v })} />
                     <div className="at-inks" role="group" aria-label={t("at.ink")}>
-                      {INKS.map((c) => <button key={c} type="button" className="at-sw" style={{ background: c }} aria-label={`${t("at.ink")} ${c}`} aria-pressed={c === sel.ink} onClick={() => patch({ ink: c })} />)}
-                      <input type="color" id="at-ink" value={sel.ink} aria-label={t("at.inkCustom")} onChange={(e) => patch({ ink: e.target.value })} />
+                      {INKS.map((c) => <button key={c} type="button" className="at-sw" style={{ background: c }} aria-label={`${t("at.ink")} ${c}`} aria-pressed={c === sel.ink} onClick={() => patch({ ink: c, autoInk: false })} />)}
+                      <input type="color" id="at-ink" value={sel.ink} aria-label={t("at.inkCustom")} onChange={(e) => patch({ ink: e.target.value, autoInk: false })} />
                     </div>
                     <Range id="at-opacity" label={t("at.opacity")} min={0.1} max={1} step={0.01} value={sel.opacity} format={(v) => `${Math.round(v * 100)} %`} onChange={(v) => patch({ opacity: v })} />
                   </>

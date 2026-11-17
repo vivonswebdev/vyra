@@ -102,3 +102,28 @@ export function clampToPiece(layout: Layout, piece: PieceId, x: number, y: numbe
   const hx = Math.min(w / 2, r.w / 2), hy = Math.min(h / 2, r.h / 2);
   return [Math.max(-r.w / 2 + hx, Math.min(r.w / 2 - hx, x)), Math.max(hy, Math.min(r.h - hy, y))];
 }
+
+/** Encres attribuées automatiquement aux textes imprimés (jamais une encre choisie à la main). */
+export const AUTO_INK_DARK = "#1f2c5c";
+export const AUTO_INK_LIGHT = "#fbfaf6";
+
+/** Luminance relative (WCAG) d'une couleur « #rrggbb ». */
+export function luminance(hex: string): number {
+  const n = parseInt(hex.slice(1, 7), 16);
+  const ch = (v: number) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * ch((n >> 16) & 255) + 0.7152 * ch((n >> 8) & 255) + 0.0722 * ch(n & 255);
+}
+
+/** Rapport de contraste (WCAG) entre deux couleurs. */
+export function contrast(a: string, b: string): number {
+  const [x, y] = [luminance(a), luminance(b)].sort((p, q) => q - p);
+  return (x + 0.05) / (y + 0.05);
+}
+
+/** Encre par défaut lisible sur ce fond : la plus contrastée des deux encres automatiques. */
+export function autoInk(background: string): string {
+  return contrast(AUTO_INK_DARK, background) >= contrast(AUTO_INK_LIGHT, background) ? AUTO_INK_DARK : AUTO_INK_LIGHT;
+}
