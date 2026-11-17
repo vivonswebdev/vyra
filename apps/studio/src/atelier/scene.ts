@@ -2,10 +2,19 @@
 // l'atlas dessiné à plat. Interactions : tourner la vue, tirer le tissu, déplacer une impression.
 import * as THREE from "three";
 import { type Atlas } from "./atlas.js";
+import { type Backdrop, drawBackdrop } from "./backdrop.js";
 import { buildCloth, hoodPoint, redrape, type Sim, step } from "./cloth.js";
 import { atlasToPiece, type Garment, type Layout, type PieceId, PX_PER_CM as S } from "./garments.js";
 
 export type CameraView = "front" | "side" | "back";
+export type LightPreset = "studio" | "soft" | "contrast";
+export type Fabric = "cotton" | "fleece" | "jersey";
+const FABRIC: Record<Fabric, { rough: number; bump: number }> = { cotton: { rough: 0.93, bump: 1.2 }, fleece: { rough: 1, bump: 1.7 }, jersey: { rough: 0.82, bump: 0.8 } };
+const LIGHTS: Record<LightPreset, { hemi: number; key: number; rim: number; warm: number }> = {
+  studio: { hemi: 2.3, key: 2.2, rim: 1, warm: 0xffffff },
+  soft: { hemi: 2.9, key: 1.3, rim: 0.7, warm: 0xfff6ec },
+  contrast: { hemi: 1.5, key: 3.2, rim: 1.4, warm: 0xffefd8 },
+};
 export interface SceneStats { nodes: number; constraints: number; solverMs: number; fps: number }
 export type PrintPointer = (phase: "down" | "move" | "up", at: { piece: PieceId; x: number; y: number } | null) => boolean | void;
 
@@ -43,6 +52,18 @@ export class GarmentScene {
   private drag: null | { type: "orbit"; x: number; y: number; theta: number; phi: number } | { type: "pull"; plane: THREE.Plane; offset: THREE.Vector3 } | { type: "move" } = null;
   private ro: ResizeObserver;
   private statsAcc = { solver: 0, frames: 0, t0: performance.now() };
+  private hemi!: THREE.HemisphereLight;
+  private key!: THREE.DirectionalLight;
+  private rim!: THREE.DirectionalLight;
+  private bg = document.createElement("canvas");
+  private bgTex: THREE.CanvasTexture | null = null;
+  private backdrop: Backdrop = { color: "#d9d3c8", leaves: true };
+  private hanger = new THREE.Group();
+  private hangerY = 0;
+  private hangerOn = true;
+  private fabric: Fabric = "cotton";
+  private relief = 1;
+  private puff = false;
   private reduceMotion = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   constructor(private canvas: HTMLCanvasElement, private atlas: Atlas) {
@@ -51,22 +72,24 @@ export class GarmentScene {
     this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x8796ab, 2.3));
-    const key = new THREE.DirectionalLight(0xffffff, 2.2);
+    this.hemi = new THREE.HemisphereLight(0xffffff, 0x8796ab, 2.3);
+    this.scene.add(this.hemi);
+    const key = (this.key = new THREE.DirectionalLight(0xffffff, 2.2));
     key.position.set(60, 120, 140);
     key.castShadow = true;
     key.shadow.mapSize.set(1024, 1024);
     Object.assign(key.shadow.camera, { left: -110, right: 110, top: 80, bottom: -130, near: 10, far: 500 });
     key.shadow.radius = 6;
     key.target.position.set(0, -40, 0);
-    const rim = new THREE.DirectionalLight(0xdfe8ff, 1);
+    const rim = (this.rim = new THREE.DirectionalLight(0xdfe8ff, 1));
     rim.position.set(-120, 40, -120);
     this.scene.add(key, key.target, rim);
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), new THREE.ShadowMaterial({ opacity: 0.1 }));
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), new THREE.ShadowMaterial({ opacity: 0.16 }));
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -96;
     ground.receiveShadow = true;
     this.scene.add(ground);
+    this.buildHanger();
     this.makeTextures();
     this.mat = new THREE.MeshStandardMaterial({ map: this.tex, bumpMap: this.bumpTex, bumpScale: 1, roughness: 0.93, metalness: 0, side: THREE.DoubleSide });
     canvas.addEventListener("pointerdown", this.down);
@@ -90,6 +113,7 @@ export class GarmentScene {
     this.target.y = g.hood ? -24 : -36;
     this.fit = g.hood ? 1.18 : 1;
     this.resize();
+    this.setHanger(this.hangerOn);
     this.sim = buildCloth(g);
     for (const m of [...this.meshes, ...this.cordMeshes, ...this.extra]) { this.scene.remove(m); m.geometry.dispose(); }
     this.meshes = []; this.cordMeshes = []; this.extra = [];
@@ -129,7 +153,66 @@ export class GarmentScene {
 
   setCordColor(hex: string) { this.cordMat.color.set(hex); }
   /** Relief : plus marqué pour l'impression gonflante. */
-  setRelief(puff: boolean) { this.mat.bumpScale = puff ? 2.6 : 1.2; }
+  setRelief(puff: boolean) { this.puff = puff; this.applyMaterial(); }
+  /** Matière (rugosité, relief du tricot) et intensité du relief (0 à 2). */
+  setFabric(f: Fabric, relief: number) { this.fabric = f; this.relief = relief; this.applyMaterial(); }
+  private applyMaterial() {
+    const f = FABRIC[this.fabric];
+    this.mat.roughness = f.rough;
+    this.mat.bumpScale = (this.puff ? 2.6 : f.bump) * this.relief;
+  }
+  setLight(p: LightPreset) {
+    const l = LIGHTS[p];
+    this.hemi.intensity = l.hemi; this.key.intensity = l.key; this.rim.intensity = l.rim;
+    this.key.color.set(l.warm);
+  }
+  setBackdrop(b: Backdrop) { this.backdrop = b; this.paintBackdrop(); }
+  /** Cintre affiché sur demande ; jamais sous une capuche relevée, qui le recouvrirait. */
+  setHanger(on: boolean) { this.hangerOn = on; this.hanger.visible = on && !this.g?.hood; }
+  resetView() { this.turntable = false; this.cam.goal = 0; this.cam.phi = 0.08; this.resize(); }
+  /** Image PNG de la vue 3D telle qu'affichée (fond de studio compris). */
+  snapshot(): string {
+    this.renderer.render(this.scene, this.camera);
+    return this.canvas.toDataURL("image/png");
+  }
+
+  private paintBackdrop() {
+    const r = this.canvas.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    const k = Math.min(1.5, window.devicePixelRatio || 1);
+    drawBackdrop(this.bg, r.width * k, r.height * k, this.backdrop);
+    this.bgTex?.dispose();
+    this.bgTex = new THREE.CanvasTexture(this.bg);
+    this.bgTex.colorSpace = THREE.SRGBColorSpace;
+    this.scene.background = this.bgTex;
+  }
+
+  /** Cintre : crochet au-dessus de l'encolure et barre cachée dans les épaules. */
+  private buildHanger() {
+    const metal = new THREE.MeshStandardMaterial({ color: 0xc9ccd1, roughness: 0.35, metalness: 0.85 });
+    const wood = new THREE.MeshStandardMaterial({ color: 0xf3f1ec, roughness: 0.55 });
+    const hook = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 5, 0), new THREE.Vector3(0, 9.5, 0.4), new THREE.Vector3(1.6, 12.4, 0.4),
+      new THREE.Vector3(4.2, 12.6, 0.2), new THREE.Vector3(5, 10.4, 0), new THREE.Vector3(3.6, 8.8, 0),
+    ]);
+    const h = new THREE.Mesh(new THREE.TubeGeometry(hook, 48, 0.34, 10, false), metal);
+    h.castShadow = true;
+    const bar = new THREE.CatmullRomCurve3([new THREE.Vector3(-21, -6.5, 0), new THREE.Vector3(-10, -2.4, 0), new THREE.Vector3(0, -0.6, 0), new THREE.Vector3(10, -2.4, 0), new THREE.Vector3(21, -6.5, 0)]);
+    const b = new THREE.Mesh(new THREE.TubeGeometry(bar, 40, 1.05, 12, false), wood);
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.9, 1.6, 16), wood);
+    neck.position.y = -0.2;
+    this.hanger.add(h, b, neck);
+    this.scene.add(this.hanger);
+  }
+  /** Hauteur du cintre : juste au-dessus du point le plus haut du col (ou de la capuche). */
+  private placeHanger(dt: number) {
+    const P = this.sim.pos;
+    let top = -Infinity;
+    for (let i = 0; i < this.sim.n; i++) if (Math.abs(P[i * 3]) < 5 && Math.abs(P[i * 3 + 2]) < 14) top = Math.max(top, P[i * 3 + 1]);
+    if (!Number.isFinite(top) || !this.hanger.visible) return;
+    this.hangerY += (top + 0.4 - this.hangerY) * Math.min(1, dt * 3);
+    this.hanger.position.set(0, this.hangerY, 0);
+  }
   redrape() { redrape(this.sim); }
   view(v: CameraView) { this.turntable = false; this.cam.goal = VIEW_ANGLE[v]; }
 
@@ -151,6 +234,8 @@ export class GarmentScene {
     this.canvas.removeEventListener("wheel", this.wheel);
     for (const m of [...this.meshes, ...this.cordMeshes, ...this.extra]) m.geometry.dispose();
     this.mat.dispose(); this.cordMat.dispose(); this.tex.dispose(); this.bumpTex.dispose();
+    this.bgTex?.dispose();
+    this.hanger.traverse((o) => { if (o instanceof THREE.Mesh) { o.geometry.dispose(); (o.material as THREE.Material).dispose(); } });
     this.renderer.dispose();
   }
 
@@ -216,6 +301,7 @@ export class GarmentScene {
     this.camera.aspect = r.width / r.height;
     this.camera.updateProjectionMatrix();
     this.cam.dist = Math.max(210, (240 / Math.min(1, this.camera.aspect)) * 0.92) * this.fit;
+    this.paintBackdrop();
   }
 
   private frame(now: number) {
@@ -237,6 +323,7 @@ export class GarmentScene {
     step(this.sim, 1 / 120, { breeze: this.breeze });
     step(this.sim, 1 / 120, { breeze: this.breeze });
     this.sync();
+    this.placeHanger(dt);
     this.statsAcc.solver = this.statsAcc.solver * 0.9 + (performance.now() - t0) * 0.1;
     if (this.turntable && !this.reduceMotion) this.cam.theta += dt * 0.45;
     if (this.cam.goal != null) {

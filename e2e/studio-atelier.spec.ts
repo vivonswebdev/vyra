@@ -110,3 +110,48 @@ test("atelier : image importée et motif continu sur tout le vêtement (devant, 
   await expect(page.getByTestId("at-layers")).toContainText("02-fleur.png");
   expect(errors).toEqual([]);
 });
+
+test("atelier : espace de travail (unités du patron, scène photo, annuler, photo 3D)", async ({ page }) => {
+  const errors = trackErrors(page);
+  await signupApi(page);
+  await page.goto("/studio/");
+  await page.getByTestId("new-design").click();
+  await page.getByTestId("demo-02-fleur").click();
+  await page.waitForURL(/\/studio\/p\//);
+  await waitSaved(page);
+  const id = page.url().split("/p/")[1];
+  await page.goto(`/studio/p/${id}/atelier`);
+  await expect(page.getByTestId("atelier")).toBeVisible();
+  const layers = page.getByTestId("at-layers").getByRole("listitem");
+  await expect(layers).toHaveCount(2);
+
+  // Règles du patron : changer d'unité redessine le patron.
+  await expect.poll(() => sample(page, "at-2d")).toBeGreaterThan(0);
+  const inCm = await sample(page, "at-2d");
+  await page.getByRole("group", { name: "Unité" }).getByRole("button", { name: "in" }).click();
+  await expect.poll(() => sample(page, "at-2d")).not.toBe(inCm);
+
+  // Annuler / rétablir un ajout de calque.
+  await page.getByTestId("at-add-text").click();
+  await expect(layers).toHaveCount(3);
+  await page.getByRole("button", { name: "Annuler" }).click();
+  await expect(layers).toHaveCount(2);
+  await page.getByRole("button", { name: "Rétablir" }).click();
+  await expect(layers).toHaveCount(3);
+
+  // Scène : fond, ombre de feuillage, lumière, cintre ; gardés dans le navigateur.
+  await page.getByRole("tab", { name: "Scène" }).click();
+  await page.getByRole("button", { name: "Sauge" }).click();
+  await page.getByRole("switch", { name: "Cintre" }).uncheck();
+  await page.getByRole("group", { name: "Lumière" }).getByRole("button", { name: "Douce" }).click();
+  await expect.poll(() => sample(page, "at-3d")).toBeGreaterThan(0);
+  await page.reload();
+  await page.getByRole("tab", { name: "Scène" }).click();
+  await expect(page.getByRole("button", { name: "Sauge" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("switch", { name: "Cintre" })).not.toBeChecked();
+
+  // Photo 3D : un PNG est téléchargé.
+  const [download] = await Promise.all([page.waitForEvent("download"), page.getByTestId("at-snapshot").click()]);
+  expect(download.suggestedFilename()).toMatch(/-tee-3d\.png$/);
+  expect(errors).toEqual([]);
+});

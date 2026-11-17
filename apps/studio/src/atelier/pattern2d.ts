@@ -5,7 +5,19 @@ import { type AtelierLayer, type Atlas, pickLayer } from "./atlas.js";
 import { type Garment, type Layout, type PieceId, PX_PER_CM as S, topEdge } from "./garments.js";
 import { type Affine, sheetExtent, sheetPieces, sheetToPiece } from "./sheet.js";
 
-export interface PatternLabels { front: string; back: string; frontInfo: string; backInfo: string; hood: string }
+export type Unit = "mm" | "cm" | "in";
+export interface PatternLabels {
+  front: string; back: string; hood: string; sleeveL: string; sleeveR: string;
+  /** Cotes d'une pièce (w × h en cm) dans l'unité affichée, avec le nombre de coupes. */
+  dims: (w: number, h: number) => string;
+}
+/** Graduation des règles : pas d'étiquette et de petite graduation, en cm. */
+const RULER: Record<Unit, { per: number; major: number; minor: number }> = {
+  mm: { per: 10, major: 10, minor: 2 },
+  cm: { per: 1, major: 25, minor: 5 },
+  in: { per: 1 / 2.54, major: 25.4, minor: 2.54 },
+};
+const RW = 22; // épaisseur des règles (px CSS)
 interface Piece { kind: "body" | "sleeve" | "hood"; piece: PieceId | "plain"; M: DOMMatrix; sgn: number }
 export type LayerPatch = Partial<Pick<AtelierLayer, "x" | "y" | "rotate">> & { width?: number; cap?: number; w?: number; h?: number };
 const dom = (m: Affine) => new DOMMatrix([m.a, m.b, m.c, m.d, m.e, m.f]);
@@ -27,6 +39,8 @@ export class PatternView {
   private selected: number | null = null;
   private labels!: PatternLabels;
   private hoodFill = "#fbfcfd";
+  private unit: Unit = "cm";
+  private line = "#3a332d";
   private ink = "#1c2742";
   private muted = "#5d6a82";
   /** p : pièce dans laquelle on agit (calque de pièce), ou null pour la feuille entière (motif continu). */
@@ -52,9 +66,9 @@ export class PatternView {
     this.canvas.removeEventListener("pointercancel", this.up);
   }
 
-  set(inp: { garment: Garment; layout: Layout; atlas: Atlas; layers: AtelierLayer[]; selected: number | null; labels: PatternLabels; hoodFill: string }) {
+  set(inp: { garment: Garment; layout: Layout; atlas: Atlas; layers: AtelierLayer[]; selected: number | null; labels: PatternLabels; hoodFill: string; unit: Unit }) {
     const refit = inp.garment !== this.g;
-    Object.assign(this, { g: inp.garment, layout: inp.layout, atlas: inp.atlas, layers: inp.layers, selected: inp.selected, labels: inp.labels, hoodFill: inp.hoodFill });
+    Object.assign(this, { g: inp.garment, layout: inp.layout, atlas: inp.atlas, layers: inp.layers, selected: inp.selected, labels: inp.labels, hoodFill: inp.hoodFill, unit: inp.unit });
     if (refit) this.fit();
     cancelAnimationFrame(this.raf);
     this.raf = requestAnimationFrame(() => this.draw());
@@ -63,10 +77,12 @@ export class PatternView {
   fit() {
     if (!this.g) return;
     const r = this.canvas.getBoundingClientRect();
-    const e = sheetExtent(this.g), pad = 12;
-    this.scale = Math.max(0.5, Math.min((r.width - pad * 2) / e.w, (r.height - pad * 2) / e.h));
-    this.ox = (r.width - e.w * this.scale) / 2;
-    this.oy = pad + Math.max(0, (r.height - pad * 2 - e.h * this.scale) / 2);
+    // Place réservée : règles (haut, gauche), barre d'outils à gauche, étiquettes des pièces en bas.
+    const e = sheetExtent(this.g), padL = RW + 64, padR = 18, padT = RW + 22, padB = 34;
+    const aw = r.width - padL - padR, ah = r.height - padT - padB;
+    this.scale = Math.max(0.5, Math.min(aw / e.w, ah / e.h));
+    this.ox = padL + (aw - e.w * this.scale) / 2;
+    this.oy = padT + Math.max(0, (ah - e.h * this.scale) / 2);
   }
 
   /** Écran (px CSS) ← feuille (cm). */
@@ -88,10 +104,14 @@ export class PatternView {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, W, H);
     this.matrices();
+    this.placed = [];
+    const sleeveLabels: (() => void)[] = [];
     const g = this.g, k = this.scale, D = new DOMMatrix().scale(dpr);
     const css = getComputedStyle(c);
     this.ink = css.getPropertyValue("--text").trim() || "#1c2742";
     this.muted = css.getPropertyValue("--muted").trim() || "#5d6a82";
+    this.line = css.getPropertyValue("--line").trim() || "#3a332d";
+    this.grid(ctx, dpr, r.width, r.height);
     const stroke = (M: DOMMatrix, pts: [number, number][], color: string, w = 2.4) => {
       ctx.setTransform(D.multiply(M));
       ctx.beginPath();
@@ -106,11 +126,17 @@ export class PatternView {
     for (const p of this.pieces.filter((q) => q.kind === "sleeve")) {
       ctx.save(); ctx.setTransform(D.multiply(p.M));
       ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo((p.sgn * g.circ) / 2, 0); ctx.lineTo((p.sgn * g.cuff) / 2, g.L); ctx.lineTo(0, g.L); ctx.closePath();
-      ctx.shadowColor = "rgba(28,39,66,.2)"; ctx.shadowBlur = 10; ctx.shadowOffsetY = 3; ctx.fillStyle = "#fff"; ctx.fill(); ctx.shadowColor = "transparent";
+      ctx.shadowColor = "rgba(0,0,0,.45)"; ctx.shadowBlur = 10; ctx.shadowOffsetY = 3; ctx.fillStyle = "#fff"; ctx.fill(); ctx.shadowColor = "transparent";
       ctx.clip(); paint(p.piece as PieceId); ctx.restore();
       stroke(p.M, [[0, 0], [0, g.L]], SEAM.sleeveTop);
       stroke(p.M, [[(p.sgn * g.cuff) / 2, g.L], [(p.sgn * g.circ) / 2, 0]], SEAM.underarm);
       stroke(p.M, [[0, g.L], [(p.sgn * g.cuff) / 2, g.L]], SEAM.edge, 1.6);
+      // Étiquette sous le poignet, du côté extérieur de la manche.
+      // Étiquette sous le poignet, sinon au-dessus de la tête de manche (posée après celles du corps).
+      const cands = [p.M.transformPoint(new DOMPoint((p.sgn * g.cuff) / 4, g.L + 5)), p.M.transformPoint(new DOMPoint((p.sgn * g.circ) / 2, -3))];
+      cands.push(new DOMPoint(cands[1].x, cands[1].y - 14), new DOMPoint(cands[1].x, cands[1].y - 30));
+      const name = p.piece === "sleeveL" ? this.labels.sleeveL : this.labels.sleeveR;
+      sleeveLabels.push(() => this.label(ctx, dpr, cands, name, this.labels.dims(g.circ, g.L)));
     }
     for (const p of this.pieces.filter((q) => q.kind === "body")) {
       const back = p.piece === "back";
@@ -118,7 +144,7 @@ export class PatternView {
       ctx.beginPath();
       for (let x = -g.W / 2; x <= g.W / 2 + 0.01; x += 0.5) { const y = topEdge(g, x, back); if (x === -g.W / 2) ctx.moveTo(x, y); else ctx.lineTo(x, y); }
       ctx.lineTo(g.W / 2, g.H); ctx.lineTo(-g.W / 2, g.H); ctx.closePath();
-      ctx.shadowColor = "rgba(28,39,66,.2)"; ctx.shadowBlur = 12; ctx.shadowOffsetY = 3; ctx.fillStyle = "#fff"; ctx.fill(); ctx.shadowColor = "transparent";
+      ctx.shadowColor = "rgba(0,0,0,.45)"; ctx.shadowBlur = 12; ctx.shadowOffsetY = 3; ctx.fillStyle = "#fff"; ctx.fill(); ctx.shadowColor = "transparent";
       ctx.clip(); paint(p.piece as PieceId); ctx.restore();
       const sh: [number, number][] = [];
       for (let x = g.W * 0.2; x <= g.W / 2 + 0.01; x += 0.5) sh.push([x, topEdge(g, x, back)]);
@@ -129,22 +155,21 @@ export class PatternView {
       const nk: [number, number][] = [];
       for (let x = -g.W * 0.2; x <= g.W * 0.2 + 0.01; x += 0.5) nk.push([x, topEdge(g, x, back)]);
       stroke(p.M, nk, SEAM.edge, 1.6);
-      // Cote de longueur.
+      // Droit-fil : ligne pointillée au milieu de la pièce.
       ctx.setTransform(D.multiply(p.M));
-      const ax = -g.W / 2 + 4.5;
-      ctx.strokeStyle = "#1c2742"; ctx.fillStyle = "#1c2742"; ctx.lineWidth = 1.1 / k; // sur la pièce (fond clair)
-      ctx.beginPath(); ctx.moveTo(ax, 6); ctx.lineTo(ax, g.H - 8); ctx.stroke();
-      for (const [y, dir] of [[6, 1], [g.H - 8, -1]]) { ctx.beginPath(); ctx.moveTo(ax, y); ctx.lineTo(ax - 0.8, y + dir * 1.6); ctx.lineTo(ax + 0.8, y + dir * 1.6); ctx.closePath(); ctx.fill(); }
-      this.label(ctx, dpr, p.M.transformPoint(new DOMPoint(0, g.H + 3.4)), back ? this.labels.back : this.labels.front, back ? this.labels.backInfo : this.labels.frontInfo);
+      ctx.strokeStyle = "rgba(255,255,255,.35)"; ctx.lineWidth = 1 / k; ctx.setLineDash([5 / k, 4 / k]);
+      ctx.beginPath(); ctx.moveTo(0, topEdge(g, 0, back) + 1); ctx.lineTo(0, g.H - 1); ctx.stroke(); ctx.setLineDash([]);
+      this.label(ctx, dpr, p.M.transformPoint(new DOMPoint(0, g.H + 3.4)), back ? this.labels.back : this.labels.front, this.labels.dims(g.W, g.H));
     }
+    for (const f of sleeveLabels) f();
     const hood = this.pieces.find((q) => q.kind === "hood");
     if (hood) {
       ctx.save(); ctx.setTransform(D.multiply(hood.M));
       ctx.beginPath(); ctx.moveTo(-16, 0); ctx.quadraticCurveTo(-17, -12, -4, -16); ctx.quadraticCurveTo(14, -18, 17, -4); ctx.lineTo(16, 12); ctx.quadraticCurveTo(2, 16, -16, 12); ctx.closePath();
-      ctx.shadowColor = "rgba(28,39,66,.2)"; ctx.shadowBlur = 10; ctx.fillStyle = this.hoodFill; ctx.fill(); ctx.shadowColor = "transparent";
+      ctx.shadowColor = "rgba(0,0,0,.45)"; ctx.shadowBlur = 10; ctx.fillStyle = this.hoodFill; ctx.fill(); ctx.shadowColor = "transparent";
       ctx.strokeStyle = SEAM.edge; ctx.lineWidth = 1.6 / k; ctx.stroke();
       ctx.restore();
-      this.label(ctx, dpr, hood.M.transformPoint(new DOMPoint(0, 15.5)), "", this.labels.hood);
+      this.label(ctx, dpr, hood.M.transformPoint(new DOMPoint(0, 15.5)), this.labels.hood, this.labels.dims(34, 34));
     }
     // Sélection : cadre pointillé, poignée de rotation, poignée de taille (textes, images, formes).
     const L = this.layers.find((l) => l.id === this.selected);
@@ -155,23 +180,84 @@ export class PatternView {
         : this.pieces.filter((p) => p.piece === L.piece && !(p.kind === "sleeve" && Math.abs(L.x) > 0.5 && Math.sign(L.x) !== p.sgn)).map((p) => p.M);
       for (const M of frames) {
         ctx.setTransform(D.multiply(M).translate(L.x, L.y).rotate(L.rotate));
-        ctx.strokeStyle = "#c23a2b"; ctx.lineWidth = 1.2 / k; ctx.setLineDash([4 / k, 3 / k]);
+        ctx.strokeStyle = "#e0a25e"; ctx.lineWidth = 1.2 / k; ctx.setLineDash([4 / k, 3 / k]);
         ctx.strokeRect(-box.w / 2, -box.h / 2, box.w, box.h); ctx.setLineDash([]);
         ctx.beginPath(); ctx.moveTo(0, -box.h / 2); ctx.lineTo(0, -box.h / 2 - 2.6); ctx.stroke();
-        ctx.fillStyle = "#fff";
+        ctx.fillStyle = "#1b1714";
         ctx.beginPath(); ctx.arc(0, -box.h / 2 - 3.2, 4.5 / k, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
         if (L.kind !== "embroidery") { ctx.fillRect(box.w / 2 - 3.5 / k, -3.5 / k, 7 / k, 7 / k); ctx.strokeRect(box.w / 2 - 3.5 / k, -3.5 / k, 7 / k, 7 / k); }
       }
     }
   }
 
-  private label(ctx: CanvasRenderingContext2D, dpr: number, at: DOMPoint, title: string, info: string) {
+  /** Étiquettes déjà posées dans ce dessin (rectangles écran), pour ne pas les superposer. */
+  private placed: { x0: number; y0: number; x1: number; y1: number }[] = [];
+  /** Pose une étiquette au premier emplacement libre parmi les candidats ; renonce si aucun ne l'est. */
+  private label(ctx: CanvasRenderingContext2D, dpr: number, at: DOMPoint | DOMPoint[], title: string, info: string) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const k = this.scale;
+    const bigF = Math.max(10, Math.min(13, k * 1.6)), smallF = Math.max(9, Math.min(11, k * 1.3));
+    ctx.font = `600 ${bigF}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+    const tw = ctx.measureText(title).width;
+    ctx.font = `500 ${smallF}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+    const iw = info && k >= 1.6 ? ctx.measureText(info).width : 0;
+    const w = Math.max(tw, iw) + 6, h = bigF + (iw ? smallF + 4 : 0);
+    const spot = (Array.isArray(at) ? at : [at]).find((p) => {
+      const r = { x0: p.x - w / 2, y0: p.y - bigF, x1: p.x + w / 2, y1: p.y - bigF + h };
+      return !this.placed.some((q) => r.x0 < q.x1 && r.x1 > q.x0 && r.y0 < q.y1 && r.y1 > q.y0);
+    });
+    if (!spot) return;
+    this.placed.push({ x0: spot.x - w / 2, y0: spot.y - bigF, x1: spot.x + w / 2, y1: spot.y - bigF + h });
+    this.drawLabel(ctx, spot, title, iw ? info : "");
+  }
+  private drawLabel(ctx: CanvasRenderingContext2D, at: DOMPoint, title: string, info: string) {
     ctx.textAlign = "center";
     const k = this.scale;
-    if (title) { ctx.fillStyle = this.ink; ctx.font = `700 ${Math.max(8, Math.min(13, k * 1.5))}px "JetBrains Mono", monospace`; ctx.fillText(title, at.x, at.y); }
-    if (info && k >= 2.4) { ctx.fillStyle = this.muted; ctx.font = `500 ${Math.max(8, Math.min(11, k * 1.2))}px "JetBrains Mono", monospace`; ctx.fillText(info, at.x, at.y + (title ? Math.max(11, k * 2) : 0)); }
+    const big = Math.max(10, Math.min(13, k * 1.6)), small = Math.max(9, Math.min(11, k * 1.3));
+    if (title) { ctx.fillStyle = this.ink; ctx.font = `600 ${big}px system-ui, -apple-system, "Segoe UI", sans-serif`; ctx.fillText(title, at.x, at.y); }
+    if (info && k >= 1.6) { ctx.fillStyle = this.muted; ctx.font = `500 ${small}px system-ui, -apple-system, "Segoe UI", sans-serif`; ctx.fillText(info, at.x, at.y + (title ? big + 3 : 0)); }
     ctx.textAlign = "left";
+  }
+
+  /** Fond : grille de points tous les 5 cm, puis règles graduées dans l'unité choisie, origine au bord de la feuille. */
+  private grid(ctx: CanvasRenderingContext2D, dpr: number, w: number, h: number) {
+    const k = this.scale, step = 5 * k;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = this.line;
+    if (step >= 6) {
+      const x0 = this.ox % step, y0 = this.oy % step;
+      for (let x = x0; x < w; x += step) for (let y = y0; y < h; y += step) if (x > RW && y > RW) ctx.fillRect(x - 0.6, y - 0.6, 1.2, 1.2);
+    }
+    const u = RULER[this.unit];
+    ctx.fillStyle = getComputedStyle(this.canvas).getPropertyValue("--ruler").trim() || "#211c18";
+    ctx.fillRect(0, 0, w, RW); ctx.fillRect(0, 0, RW, h);
+    ctx.strokeStyle = this.line; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, RW + 0.5); ctx.lineTo(w, RW + 0.5); ctx.moveTo(RW + 0.5, 0); ctx.lineTo(RW + 0.5, h); ctx.stroke();
+    ctx.fillStyle = this.muted; ctx.strokeStyle = this.muted;
+    ctx.font = `500 9.5px "JetBrains Mono", monospace`;
+    // Graduations assez espacées : on double le pas jusqu'à au moins 6 px entre deux traits.
+    let minor = u.minor, major = u.major;
+    while (minor * k < 6) { minor *= 2; major *= 2; }
+    while (major * k > 160) major /= 2;
+    if (major < minor) major = minor;
+    const label = (cm: number) => String(Math.round(cm * u.per * 10) / 10);
+    ctx.beginPath();
+    for (let i = Math.floor((RW - this.ox) / k / minor); this.ox + i * minor * k < w; i++) {
+      const cm = i * minor, x = Math.round(this.ox + cm * k) + 0.5;
+      if (x <= RW) continue;
+      const big = Math.abs(cm / major - Math.round(cm / major)) < 1e-6;
+      ctx.moveTo(x, RW); ctx.lineTo(x, big ? RW - 9 : RW - 4);
+      if (big) ctx.fillText(label(cm), x + 3, 10);
+    }
+    for (let i = Math.floor((RW - this.oy) / k / minor); this.oy + i * minor * k < h; i++) {
+      const cm = i * minor, y = Math.round(this.oy + cm * k) + 0.5;
+      if (y <= RW) continue;
+      const big = Math.abs(cm / major - Math.round(cm / major)) < 1e-6;
+      ctx.moveTo(RW, y); ctx.lineTo(big ? RW - 9 : RW - 4, y);
+      if (big) { ctx.save(); ctx.translate(10, y + 3); ctx.rotate(-Math.PI / 2); ctx.fillText(label(cm), 0, 0); ctx.restore(); }
+    }
+    ctx.stroke();
+    ctx.fillText(this.unit, 3, 14);
   }
 
   private screen(ev: PointerEvent) {
