@@ -53,7 +53,9 @@ test("atelier : broderie du projet sur un vêtement 3D et un patron 2D, textes i
   await expect(page.getByTestId("at-layers")).toContainText("ATELIER VYRA");
   await expect.poll(() => sample(page, "at-2d")).not.toBe(withText);
 
-  // Rendu tissu et redrapé : aucune erreur.
+  // Maquette par défaut ; la simulation reste disponible (rendu tissu et redrapé : aucune erreur).
+  await expect(page.getByRole("group", { name: "Modèle 3D" }).getByRole("button", { name: "Maquette" })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("group", { name: "Modèle 3D" }).getByRole("button", { name: "Simulation" }).click();
   await page.getByRole("button", { name: "Marine" }).click();
   await page.getByTestId("at-redrape").click();
 

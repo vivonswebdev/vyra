@@ -18,7 +18,7 @@ import { Atlas, FONTS, fontOf, pickLayer, type AtelierLayer, type EmbroideryArt,
 import { clampToSheet, pieceToSheet, sheetExtent, sheetToPiece } from "../atelier/sheet.js";
 import { AUTO_INK_DARK, autoInk, clampToPiece, GARMENTS, layoutFor, PIECES, type Garment, type GarmentId, type Layout, type PieceId } from "../atelier/garments.js";
 import { PatternView, type LayerPatch, type Unit } from "../atelier/pattern2d.js";
-import { GarmentScene, type CameraView, type Fabric, type LightPreset, type SceneStats } from "../atelier/scene.js";
+import { GarmentScene, type CameraView, type Fabric, type GarmentModel, type LightPreset, type SceneStats } from "../atelier/scene.js";
 
 const COLORWAYS: { id: string; hex: string }[] = [
   { id: "ecru", hex: "#f4f2ec" }, { id: "heather", hex: "#b9bdc3" }, { id: "black", hex: "#1b1c20" }, { id: "navy", hex: "#1f2d4f" },
@@ -135,8 +135,8 @@ const BACKDROPS: { id: string; hex: string }[] = [
   { id: "sky", hex: "#b7c7d6" }, { id: "white", hex: "#efeee9" }, { id: "charcoal", hex: "#3a3734" },
 ];
 type ViewMode = "pattern" | "split" | "3d";
-interface SceneSaved { backdrop: string; leaves: boolean; light: LightPreset; hanger: boolean; material: Fabric; relief: number; wrinkles: number; unit: Unit }
-const SCENE_DEFAULT: SceneSaved = { backdrop: BACKDROPS[0].hex, leaves: true, light: "studio", hanger: true, material: "cotton", relief: 1, wrinkles: 0.6, unit: "cm" };
+interface SceneSaved { backdrop: string; leaves: boolean; light: LightPreset; hanger: boolean; material: Fabric; relief: number; wrinkles: number; unit: Unit; model: GarmentModel }
+const SCENE_DEFAULT: SceneSaved = { backdrop: BACKDROPS[0].hex, leaves: true, light: "studio", hanger: true, material: "cotton", relief: 1, wrinkles: 0.6, unit: "cm", model: "mockup" };
 const UNIT_K: Record<Unit, number> = { mm: 10, cm: 1, in: 1 / 2.54 };
 
 const ICON = {
@@ -238,6 +238,7 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
   const [view, setView] = useState<CameraView | null>("front");
   const [stats, setStats] = useState<SceneStats | null>(null);
   const [noWebgl, setNoWebgl] = useState(false);
+  const [building, setBuilding] = useState(false);
   const [fontsTick, setFontsTick] = useState(0);
 
   const c3d = useRef<HTMLCanvasElement>(null);
@@ -279,6 +280,7 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
       gs = new GarmentScene(c3d.current!, atlas);
       gs.onStats = setStats;
       gs.onViewChange = setView;
+      gs.onBusy = setBuilding;
       gs.onPrint = (phase, at) => {
         // Le point touché est connu dans sa pièce et sur la feuille : un motif continu se déplace sur la feuille.
         const sheetAt = (a: NonNullable<typeof at>) => pieceToSheet(garmentRef.current, a.piece, a.x, a.y);
@@ -327,15 +329,17 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
   useEffect(() => {
     const s = scene.current;
     if (!s) return;
-    s.mode = mode; s.turntable = turntable; s.breeze = breeze;
+    // Maquette immobile : glisser sur une impression la déplace, ailleurs la vue tourne.
+    s.mode = sc.model === "mockup" ? "move" : mode; s.turntable = turntable; s.breeze = breeze;
     s.setCordColor(render === "blueprint" ? "#e6ebf2" : colorway);
     s.setGarmentColor(render === "blueprint" ? "#fbfcfd" : colorway);
     s.setRelief(printType === "puff");
-  }, [mode, turntable, breeze, render, colorway, printType]);
+  }, [mode, turntable, breeze, render, colorway, printType, sc.model]);
 
   useEffect(() => {
     const s = scene.current;
     if (!s) return;
+    s.setModel(sc.model);
     s.setBackdrop({ color: sc.backdrop, leaves: sc.leaves });
     s.setLight(sc.light);
     s.setHanger(sc.hanger);
@@ -516,16 +520,27 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
                   <small>{fabric}</small>
                 </div>
                 <span className="at-live"><i />{t("at.live")}</span>
+                {building && <p className="at-building" role="status"><Spinner /> {t("at.building")}</p>}
                 <div className="at-dock">
                   <button type="button" onClick={() => { scene.current?.resetView(); setView("front"); setTurntable(false); }}><Icon d={ICON.reset} size={16} /> {t("at.resetView")}</button>
-                  <span className="sep" />
-                  <Segmented label={t("at.mode")} value={mode} onChange={setMode} options={[{ id: "pull", label: t("at.pull") }, { id: "move", label: t("at.move") }]} />
+                  {sc.model === "sim" && (
+                    <>
+                      <span className="sep" />
+                      <Segmented label={t("at.mode")} value={mode} onChange={setMode} options={[{ id: "pull", label: t("at.pull") }, { id: "move", label: t("at.move") }]} />
+                    </>
+                  )}
                   <span className="sep" />
                   <button type="button" aria-pressed={turntable} onClick={() => { setTurntable(!turntable); setView(null); }}>{t("at.turntable")}</button>
-                  <button type="button" aria-pressed={breeze} onClick={() => setBreeze(!breeze)}>{t("at.breeze")}</button>
-                  <button type="button" onClick={() => { scene.current?.redrape(); toast(t("at.dropped")); }} data-testid="at-redrape">{t("at.redrape")}</button>
+                  {sc.model === "sim" && (
+                    <>
+                      <button type="button" aria-pressed={breeze} onClick={() => setBreeze(!breeze)}>{t("at.breeze")}</button>
+                      <button type="button" onClick={() => { scene.current?.redrape(); toast(t("at.dropped")); }} data-testid="at-redrape">{t("at.redrape")}</button>
+                    </>
+                  )}
                 </div>
-                {stats && <p className="at-stats num">{t("at.stats", { n: stats.nodes.toLocaleString(lang), c: stats.constraints.toLocaleString(lang), ms: fmt(stats.solverMs), fps: stats.fps })}</p>}
+                {stats && <p className="at-stats num">{sc.model === "mockup"
+                  ? t("at.statsMock", { n: stats.nodes.toLocaleString(lang), fps: stats.fps })
+                  : t("at.stats", { n: stats.nodes.toLocaleString(lang), c: stats.constraints.toLocaleString(lang), ms: fmt(stats.solverMs), fps: stats.fps })}</p>}
               </>
             )}
           </div>
@@ -647,6 +662,8 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
                 <Segmented label={t("at.render")} value={render} onChange={setRender} options={[{ id: "fabric", label: t("at.r.fabric") }, { id: "blueprint", label: t("at.r.blueprint") }]} />
               </Section>
               <Section title={t("at.appearance")}>
+                <Segmented label={t("at.model")} value={sc.model} onChange={(v) => setScene({ model: v })} options={[{ id: "mockup", label: t("at.mo.mockup") }, { id: "sim", label: t("at.mo.sim") }]} />
+                <p className="small muted">{t(sc.model === "mockup" ? "at.mo.mockupNote" : "at.mo.simNote")}</p>
                 <label className="at-select">
                   <span>{t("at.material")}</span>
                   <select value={sc.material} onChange={(e) => setScene({ material: e.target.value as Fabric })}>

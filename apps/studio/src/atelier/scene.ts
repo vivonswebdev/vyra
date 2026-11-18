@@ -5,9 +5,12 @@ import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment
 import { type Atlas } from "./atlas.js";
 import { type Backdrop, drawBackdrop } from "./backdrop.js";
 import { bodyAt, buildCloth, hoodPoint, redrape, type Sim, step } from "./cloth.js";
+import { buildMockup, type Mockup } from "./mockup.js";
 import { atlasToPiece, type Garment, type Layout, type PieceId, PX_PER_CM as S } from "./garments.js";
 
 export type CameraView = "front" | "side" | "back";
+/** Maquette sculptée (rendu photo, défaut) ou simulation du tissu (drapé interactif). */
+export type GarmentModel = "mockup" | "sim";
 export type LightPreset = "studio" | "soft" | "contrast";
 export type Fabric = "cotton" | "fleece" | "jersey";
 /** Matières : rugosité, relief du tricot, reflet velouté (sheen) propre aux tissus. */
@@ -29,6 +32,13 @@ const VIEW_ANGLE: Record<CameraView, number> = { front: 0, side: Math.PI / 2, ba
 
 export class GarmentScene {
   mode: "pull" | "move" = "pull";
+  private model: GarmentModel = "mockup";
+  private mockCache = new Map<string, Mockup>();
+  private worker: Worker | null = null;
+  private workerSeq = 0;
+  private pending = new Map<number, (m: Mockup) => void>();
+  /** Appelé quand une maquette est prête (la page peut retirer son indicateur de calcul). */
+  onBusy?: (busy: boolean) => void;
   turntable = false;
   breeze = false;
   onStats?: (s: SceneStats) => void;
@@ -150,14 +160,17 @@ export class GarmentScene {
     this.layout = layout;
     // Cadrage : la capuche relevée dépasse de 30 cm au-dessus des épaules ; la caméra remonte et recule un peu
     // pour la montrer entière sous l'en-tête de la vue.
-    this.target.y = g.hood ? -24 : -36;
-    this.fit = g.hood ? 1.18 : 1;
+    const raised = g.hood && this.model === "sim";
+    this.target.y = raised ? -24 : -36;
+    this.fit = raised ? 1.18 : 1;
     this.resize();
     this.setHanger(this.hangerOn);
     this.sim = buildCloth(g);
     this.buildFiller();
     for (const m of [...this.meshes, ...this.cordMeshes, ...this.extra]) { this.scene.remove(m); m.geometry.dispose(); }
     this.meshes = []; this.cordMeshes = []; this.extra = [];
+    this.filler.visible = this.model === "sim";
+    if (this.model === "mockup") { this.buildMockupMesh(g, layout); this.texVersion = -1; return; }
     const W = layout.width * S, H = layout.height * S;
     const T = this.sim.torso;
     this.meshes.push(this.grid(T.cols, T.rows, (k, j) => T.idx[j * T.cols + k], (k, j) => [(k / T.cols) * (2 * g.W * S) / W, 1 - (T.vcm[j * T.cols + (k % T.cols)] * S) / H]));
@@ -192,6 +205,60 @@ export class GarmentScene {
     this.sync();
   }
 
+  /** Change de modèle 3D (maquette ou simulation) ; le vêtement est reconstruit. */
+  setModel(m: GarmentModel) {
+    if (m === this.model) return;
+    this.model = m;
+    if (this.g) this.setGarment(this.g, this.layout);
+  }
+
+  /** Calcule une maquette dans un Web Worker (secours : sur place si les workers sont indisponibles). */
+  private requestMockup(g: Garment, layout: Layout): Promise<Mockup> {
+    if (!this.worker && typeof Worker === "function") {
+      try {
+        this.worker = new Worker(new URL("./mockup.worker.ts", import.meta.url), { type: "module" });
+        this.worker.onmessage = (ev: MessageEvent<{ id: number; m: Mockup }>) => { this.pending.get(ev.data.id)?.(ev.data.m); this.pending.delete(ev.data.id); };
+      } catch { this.worker = null; }
+    }
+    if (!this.worker) return Promise.resolve(buildMockup(g, layout));
+    const id = ++this.workerSeq;
+    return new Promise((res) => { this.pending.set(id, res); this.worker!.postMessage({ id, g, layout }); });
+  }
+
+  /** Maquette sculptée : maillage calculé une fois par vêtement (gardé en mémoire), immobile. */
+  private buildMockupMesh(g: Garment, layout: Layout) {
+    const m = this.mockCache.get(g.id);
+    if (!m) {
+      this.onBusy?.(true);
+      void this.requestMockup(g, layout).then((built) => {
+        this.mockCache.set(g.id, built);
+        this.onBusy?.(false);
+        // Toujours d'actualité (même vêtement, toujours en maquette) : on l'affiche.
+        if (this.g === g && this.model === "mockup" && !this.disposed) this.setGarment(g, layout);
+      });
+      return;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(m.position, 3));
+    geo.setAttribute("normal", new THREE.BufferAttribute(m.normal, 3));
+    geo.setAttribute("uv", new THREE.BufferAttribute(m.uv, 2));
+    geo.computeBoundingSphere();
+    const mesh = new THREE.Mesh(geo, this.mat);
+    mesh.castShadow = true;
+    this.scene.add(mesh);
+    this.meshes.push(mesh);
+    for (const line of m.cords) {
+      const tube = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(line.map((p) => new THREE.Vector3(...p))), 40, 0.34, 8, false), this.cordMat);
+      tube.castShadow = true;
+      this.scene.add(tube);
+      this.extra.push(tube);
+    }
+    // Cintre posé sur le col, barre à la largeur des épaules.
+    this.hangerY = m.top + 0.3;
+    this.hanger.position.set(0, this.hangerY, 0);
+    this.hanger.children[1].scale.x = Math.min(1, (m.shoulder - 1.5) / 21);
+  }
+
   setCordColor(hex: string) { this.cordMat.color.set(hex); }
   /** Relief : plus marqué pour l'impression gonflante. */
   setRelief(puff: boolean) { this.puff = puff; this.applyMaterial(); }
@@ -220,7 +287,7 @@ export class GarmentScene {
   }
   setBackdrop(b: Backdrop) { this.backdrop = b; this.paintBackdrop(); }
   /** Cintre affiché sur demande ; jamais sous une capuche relevée, qui le recouvrirait. */
-  setHanger(on: boolean) { this.hangerOn = on; this.hanger.visible = on && !this.g?.hood; }
+  setHanger(on: boolean) { this.hangerOn = on; this.hanger.visible = on && !(this.g?.hood && this.model === "sim"); }
   resetView() { this.turntable = false; this.cam.goal = 0; this.cam.phi = 0.08; this.resize(); }
   /** Image PNG de la vue 3D telle qu'affichée (fond de studio compris). */
   snapshot(): string {
@@ -316,7 +383,10 @@ export class GarmentScene {
     this.raf = requestAnimationFrame(loop);
   }
 
+  private disposed = false;
   dispose() {
+    this.disposed = true;
+    this.worker?.terminate();
     cancelAnimationFrame(this.raf);
     this.ro.disconnect();
     this.canvas.removeEventListener("pointerdown", this.down);
@@ -456,10 +526,12 @@ export class GarmentScene {
       this.texVersion = this.atlas.version;
     }
     const t0 = performance.now();
-    step(this.sim, 1 / 120, { breeze: this.breeze });
-    step(this.sim, 1 / 120, { breeze: this.breeze });
-    this.sync();
-    this.placeHanger(dt);
+    if (this.model === "sim") {
+      step(this.sim, 1 / 120, { breeze: this.breeze });
+      step(this.sim, 1 / 120, { breeze: this.breeze });
+      this.sync();
+      this.placeHanger(dt);
+    }
     this.statsAcc.solver = this.statsAcc.solver * 0.9 + (performance.now() - t0) * 0.1;
     if (this.turntable && !this.reduceMotion) this.cam.theta += dt * 0.45;
     if (this.cam.goal != null) {
@@ -475,7 +547,8 @@ export class GarmentScene {
     if (now - this.statsAcc.t0 > 500) {
       const fps = Math.round((this.statsAcc.frames * 1000) / (now - this.statsAcc.t0));
       this.statsAcc.frames = 0; this.statsAcc.t0 = now;
-      this.onStats?.({ nodes: this.sim.n, constraints: this.sim.ca.length, solverMs: this.statsAcc.solver, fps });
+      if (this.model === "sim") this.onStats?.({ nodes: this.sim.n, constraints: this.sim.ca.length, solverMs: this.statsAcc.solver, fps });
+      else this.onStats?.({ nodes: this.mockCache.get(this.g.id)?.triangles ?? 0, constraints: 0, solverMs: 0, fps });
     }
   }
 
@@ -498,7 +571,7 @@ export class GarmentScene {
   private down = (ev: PointerEvent) => {
     this.canvas.setPointerCapture(ev.pointerId);
     const h = this.hit(ev);
-    if (h && this.mode === "pull" && h.face) {
+    if (h && this.mode === "pull" && this.model === "sim" && h.face) {
       const { table, cols, rows, base, frac } = (h.object as THREE.Mesh).geometry.userData as { table: Int32Array; cols: number; rows: number; base: Int32Array; frac: Float32Array };
       const P = this.sim.pos;
       // Sommet affiché → particule la plus proche dans la grille de simulation.
