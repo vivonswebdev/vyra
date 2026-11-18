@@ -33,9 +33,14 @@ export function drawBackdrop(canvas: HTMLCanvasElement, w: number, h: number, b:
   if (b.leaves) {
     // Ombre de feuillage : feuilles floues, groupées en branches, venant du haut à droite.
     const r = rand(7), s = Math.min(W, H) / 900;
+    // Flou par ombre portée (ctx.filter n'existe pas dans Safari) : les feuilles sont dessinées hors du
+    // canevas, seule leur ombre floue y revient.
+    const off = 100000;
     ctx.save();
-    ctx.filter = `blur(${Math.max(4, Math.round(14 * s))}px)`;
-    ctx.fillStyle = mix(c, black, 0.32);
+    ctx.shadowColor = mix(c, black, 0.32);
+    ctx.shadowBlur = Math.max(6, Math.round(26 * s));
+    ctx.shadowOffsetX = off;
+    ctx.fillStyle = "#000";
     ctx.globalAlpha = 0.5;
     for (let br = 0; br < 7; br++) {
       let x = W * (0.55 + r() * 0.55), y = H * (-0.05 + r() * 0.55);
@@ -45,7 +50,7 @@ export function drawBackdrop(canvas: HTMLCanvasElement, w: number, h: number, b:
         y += Math.sin(dir) * 26 * s + (r() - 0.5) * 30 * s;
         const len = (26 + r() * 30) * s, wid = len * (0.38 + r() * 0.15);
         ctx.save();
-        ctx.translate(x, y);
+        ctx.translate(x - off, y);
         ctx.rotate(r() * Math.PI);
         ctx.beginPath();
         ctx.ellipse(0, 0, len, wid, 0, 0, Math.PI * 2);

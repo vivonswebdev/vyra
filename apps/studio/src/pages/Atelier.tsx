@@ -135,8 +135,8 @@ const BACKDROPS: { id: string; hex: string }[] = [
   { id: "sky", hex: "#b7c7d6" }, { id: "white", hex: "#efeee9" }, { id: "charcoal", hex: "#3a3734" },
 ];
 type ViewMode = "pattern" | "split" | "3d";
-interface SceneSaved { backdrop: string; leaves: boolean; light: LightPreset; hanger: boolean; material: Fabric; relief: number; unit: Unit }
-const SCENE_DEFAULT: SceneSaved = { backdrop: BACKDROPS[0].hex, leaves: true, light: "studio", hanger: true, material: "cotton", relief: 1, unit: "cm" };
+interface SceneSaved { backdrop: string; leaves: boolean; light: LightPreset; hanger: boolean; material: Fabric; relief: number; wrinkles: number; unit: Unit }
+const SCENE_DEFAULT: SceneSaved = { backdrop: BACKDROPS[0].hex, leaves: true, light: "studio", hanger: true, material: "cotton", relief: 1, wrinkles: 0.6, unit: "cm" };
 const UNIT_K: Record<Unit, number> = { mm: 10, cm: 1, in: 1 / 2.54 };
 
 const ICON = {
@@ -329,6 +329,7 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
     if (!s) return;
     s.mode = mode; s.turntable = turntable; s.breeze = breeze;
     s.setCordColor(render === "blueprint" ? "#e6ebf2" : colorway);
+    s.setGarmentColor(render === "blueprint" ? "#fbfcfd" : colorway);
     s.setRelief(printType === "puff");
   }, [mode, turntable, breeze, render, colorway, printType]);
 
@@ -338,7 +339,7 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
     s.setBackdrop({ color: sc.backdrop, leaves: sc.leaves });
     s.setLight(sc.light);
     s.setHanger(sc.hanger);
-    s.setFabric(sc.material, sc.relief);
+    s.setFabric(sc.material, sc.relief, sc.wrinkles);
   }, [sc]);
 
   // Images des calques : décodées une fois (y compris celles gardées dans ce navigateur), puis texture redessinée.
@@ -362,7 +363,7 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
   // Texture et patron : redessinés à chaque changement.
   useEffect(() => {
     atlas.render({
-      garment, layout, render, colorway, printType, layers, embroidery: art, images,
+      garment, layout, render, colorway, printType, layers, embroidery: art, images, wrinkles: sc.wrinkles,
       labels: { front: t("at.sheetFront", { fabric: fabric.toUpperCase() }), back: t("at.sheetBack", { fabric: fabric.toUpperCase() }) },
     });
     const pv = pattern.current;
@@ -375,7 +376,7 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
         },
       });
     }
-  }, [atlas, garment, layout, render, colorway, printType, layers, art, images, selected, fontsTick, t, fabric, sc.unit, len]);
+  }, [atlas, garment, layout, render, colorway, printType, layers, art, images, selected, fontsTick, t, fabric, sc.unit, sc.wrinkles, len]);
 
   useEffect(() => {
     try {
@@ -652,6 +653,7 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
                     {(["cotton", "fleece", "jersey"] as const).map((m) => <option key={m} value={m}>{t("at.m." + m)}</option>)}
                   </select>
                 </label>
+                <Range id="at-wrinkles" label={t("at.wrinkles")} min={0} max={1} step={0.05} value={sc.wrinkles} format={(v) => fmt(v, 2)} onChange={(v) => setScene({ wrinkles: v })} />
                 <Range id="at-relief" label={t("at.relief")} min={0} max={2} step={0.05} value={sc.relief} format={(v) => fmt(v, 2)} onChange={(v) => setScene({ relief: v })} />
                 <Segmented label={t("at.print")} value={printType} onChange={setPrintType} options={[{ id: "screen", label: t("at.p.screen") }, { id: "puff", label: t("at.p.puff") }]} />
               </Section>

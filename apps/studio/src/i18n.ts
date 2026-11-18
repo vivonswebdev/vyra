@@ -362,6 +362,7 @@ const S: Record<string, [string, string, string, string]> = {
   "at.m.cotton": ["Coton", "Katoen", "Cotton", "قطن"],
   "at.m.fleece": ["Molleton", "Fleece", "Fleece", "صوف ناعم"],
   "at.m.jersey": ["Jersey lisse", "Gladde jersey", "Smooth jersey", "جيرسي ناعم"],
+  "at.wrinkles": ["Plis et ombres", "Plooien en schaduwen", "Folds and shadows", "الثنيات والظلال"],
   "at.relief": ["Relief du tricot", "Reliëf van het breisel", "Knit relief", "بروز الحياكة"],
   "at.backdrop": ["Fond", "Achtergrond", "Backdrop", "الخلفية"],
   "at.bgColor": ["Couleur du fond", "Achtergrondkleur", "Backdrop colour", "لون الخلفية"],

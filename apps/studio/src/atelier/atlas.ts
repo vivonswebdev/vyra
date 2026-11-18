@@ -4,6 +4,7 @@
 // de relief (tricot, encre, points de broderie).
 import { type Garment, type Layout, type PieceId, PX_PER_CM as S, topEdge } from "./garments.js";
 import { inverse, pieceClip, sheetPieces } from "./sheet.js";
+import { paintFolds } from "./folds.js";
 
 export type FontId = "anton" | "unbounded" | "bodoni" | "fraunces" | "caveat" | "mono" | "inter";
 export const FONTS: { id: FontId; name: string; css: string; weight: string; style: string }[] = [
@@ -81,6 +82,8 @@ export interface AtlasInput {
   images?: Map<number, CanvasImageSource>;
   /** Libellés imprimés sur le plan (traduits par la page). */
   labels: { front: string; back: string };
+  /** Intensité des plis peints (0 à 1) ; 0,6 par défaut. */
+  wrinkles?: number;
 }
 
 export function fontOf(id: FontId) {
@@ -181,6 +184,10 @@ function hexLum(hex: string) {
 export class Atlas {
   readonly canvas = document.createElement("canvas");
   readonly bump = document.createElement("canvas");
+  /** Plis et ombres de contact (blanc = rien), même agencement que la texture ; repeints au changement de vêtement. */
+  readonly folds = document.createElement("canvas");
+  foldsVersion = 0;
+  private foldsOf: Garment | null = null;
   private ink = document.createElement("canvas");
   private emb = document.createElement("canvas");
   /** Images et formes : impression numérique, nette (sans le grain de la sérigraphie). */
@@ -216,6 +223,7 @@ export class Atlas {
     for (const c of [this.canvas, this.bump, this.ink, this.emb, this.dye, this.mask]) if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
     const actx = this.canvas.getContext("2d")!;
     this.patterns(actx);
+    if (this.foldsOf !== g) { paintFolds(this.folds, g, layout); this.foldsOf = g; this.foldsVersion++; }
     this.base(actx, inp);
 
     // Impressions : textes (sérigraphie ou gonflant), images et formes (impression numérique), broderie.
@@ -261,6 +269,9 @@ export class Atlas {
     b.setTransform(1, 0, 0, 1, 0, 0);
     b.fillStyle = "#808080"; b.fillRect(0, 0, W, H);
     b.globalAlpha = inp.render === "blueprint" ? 0.25 : 0.9; b.fillStyle = this.knit!; b.fillRect(0, 0, W, H); b.globalAlpha = 1;
+    // Plis : les creux abaissent le relief (rendu tissu seulement).
+    const wr = inp.render === "fabric" ? (inp.wrinkles ?? 0.6) : 0;
+    if (wr > 0) { b.save(); b.globalCompositeOperation = "multiply"; b.globalAlpha = wr; b.drawImage(this.folds, 0, 0); b.restore(); }
     const m = this.mask.getContext("2d")!;
     const relief = (src: HTMLCanvasElement, amount: number, blur: number) => {
       m.setTransform(1, 0, 0, 1, 0, 0); m.clearRect(0, 0, W, H);
