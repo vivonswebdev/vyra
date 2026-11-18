@@ -109,7 +109,9 @@ export class GarmentScene {
     const key = (this.key = new THREE.DirectionalLight(0xffffff, 2.2));
     key.position.set(115, 115, 95);
     key.castShadow = true;
-    key.shadow.mapSize.set(1024, 1024);
+    key.shadow.mapSize.set(2048, 2048);
+    key.shadow.bias = -0.0004;
+    key.shadow.normalBias = 0.5;
     Object.assign(key.shadow.camera, { left: -110, right: 110, top: 80, bottom: -130, near: 10, far: 500 });
     key.shadow.radius = 6;
     key.target.position.set(0, -40, 0);
@@ -125,7 +127,7 @@ export class GarmentScene {
     this.makeTextures();
     this.mat = new THREE.MeshPhysicalMaterial({
       map: this.tex, bumpMap: this.bumpTex, bumpScale: 1, aoMap: this.aoTex, aoMapIntensity: 0.9, roughness: 0.92, metalness: 0,
-      sheen: 0.55, sheenRoughness: 0.8, sheenColor: new THREE.Color(0xffffff), side: THREE.DoubleSide,
+      sheen: 0.55, sheenRoughness: 0.8, sheenColor: new THREE.Color(0xffffff), side: THREE.DoubleSide, vertexColors: true,
     });
     // Envers du tissu (vu par l'encolure, les manches, l'ourlet) : nettement plus sombre, comme à l'ombre.
     // Plis : appliqués aussi à la couleur (pas seulement à la lumière d'ambiance), sinon un tissu blanc
@@ -188,6 +190,7 @@ export class GarmentScene {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
       geo.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+      geo.setAttribute("color", new THREE.Float32BufferAttribute(new Float32Array(pos.length).fill(1), 3));
       geo.setIndex(idx);
       geo.computeVertexNormals();
       const hood = new THREE.Mesh(geo, this.mat);
@@ -209,6 +212,7 @@ export class GarmentScene {
   setModel(m: GarmentModel) {
     if (m === this.model) return;
     this.model = m;
+    this.applyMaterial();
     if (this.g) this.setGarment(this.g, this.layout);
   }
 
@@ -242,9 +246,13 @@ export class GarmentScene {
     geo.setAttribute("position", new THREE.BufferAttribute(m.position, 3));
     geo.setAttribute("normal", new THREE.BufferAttribute(m.normal, 3));
     geo.setAttribute("uv", new THREE.BufferAttribute(m.uv, 2));
+    geo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(m.ao.length * 3), 3));
+    geo.userData.ao = m.ao;
     geo.computeBoundingSphere();
     const mesh = new THREE.Mesh(geo, this.mat);
     mesh.castShadow = true;
+    // Pas d'ombre portée reçue : à cette échelle elle crée des pointillés ; les creux sont ombrés par sommet.
+    this.shadeMockup(mesh);
     this.scene.add(mesh);
     this.meshes.push(mesh);
     for (const line of m.cords) {
@@ -257,6 +265,15 @@ export class GarmentScene {
     this.hangerY = m.top + 0.3;
     this.hanger.position.set(0, this.hangerY, 0);
     this.hanger.children[1].scale.x = Math.min(1, (m.shoulder - 1.5) / 21);
+  }
+
+  /** Ombres des creux de la maquette, dosées par « Plis et ombres ». */
+  private shadeMockup(mesh: THREE.Mesh) {
+    const ao = mesh.geometry.userData.ao as Float32Array | undefined;
+    if (!ao) return;
+    const attr = mesh.geometry.attributes.color as THREE.BufferAttribute, arr = attr.array as Float32Array, k = Math.min(1, this.wrinkles * 1.5);
+    for (let i = 0; i < ao.length; i++) { const v = 1 - k * (1 - ao[i]); arr[i * 3] = v; arr[i * 3 + 1] = v; arr[i * 3 + 2] = v; }
+    attr.needsUpdate = true;
   }
 
   setCordColor(hex: string) { this.cordMat.color.set(hex); }
@@ -276,8 +293,11 @@ export class GarmentScene {
     this.mat.sheen = f.sheen;
     this.mat.sheenRoughness = f.sheenRough;
     this.mat.bumpScale = (this.puff ? 2.6 : f.bump) * this.relief;
-    this.mat.aoMapIntensity = 0.5 * this.wrinkles;
-    this.foldK.value = 0.75 * this.wrinkles;
+    // Plis peints : seulement pour la simulation ; la maquette a de vrais plis et ses propres ombres.
+    const painted = this.model === "sim" ? this.wrinkles : 0;
+    this.mat.aoMapIntensity = 0.5 * painted;
+    this.foldK.value = 0.75 * painted;
+    for (const m of this.meshes) this.shadeMockup(m);
   }
   setLight(p: LightPreset) {
     const l = LIGHTS[p];
@@ -448,6 +468,7 @@ export class GarmentScene {
     }
     geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(count * 3), 3));
     geo.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+    geo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(count * 3).fill(1), 3));
     geo.setIndex(index);
     geo.userData = { table, cols, rows, base, frac };
     const mesh = new THREE.Mesh(geo, this.mat);

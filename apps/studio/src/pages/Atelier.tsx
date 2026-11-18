@@ -367,7 +367,7 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
   // Texture et patron : redessinés à chaque changement.
   useEffect(() => {
     atlas.render({
-      garment, layout, render, colorway, printType, layers, embroidery: art, images, wrinkles: sc.wrinkles,
+      garment, layout, render, colorway, printType, layers, embroidery: art, images, wrinkles: sc.model === "mockup" ? 0 : sc.wrinkles,
       labels: { front: t("at.sheetFront", { fabric: fabric.toUpperCase() }), back: t("at.sheetBack", { fabric: fabric.toUpperCase() }) },
     });
     const pv = pattern.current;
@@ -380,7 +380,7 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
         },
       });
     }
-  }, [atlas, garment, layout, render, colorway, printType, layers, art, images, selected, fontsTick, t, fabric, sc.unit, sc.wrinkles, len]);
+  }, [atlas, garment, layout, render, colorway, printType, layers, art, images, selected, fontsTick, t, fabric, sc.unit, sc.wrinkles, sc.model, len]);
 
   useEffect(() => {
     try {

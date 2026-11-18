@@ -7,6 +7,8 @@
 import { type Garment, type Layout, topEdge } from "./garments.js";
 
 export interface Mockup {
+  /** Ombre des creux par sommet (1 = dégagé, vers 0 = au fond d'un pli, d'une aisselle, sous le col). */
+  ao: Float32Array;
   /** Triangles indépendants (3 sommets chacun) : positions, normales, coordonnées de texture (atlas). */
   position: Float32Array;
   normal: Float32Array;
@@ -61,13 +63,15 @@ export function mockupShape(g: Garment) {
   const torso = (x: number, y: number, z: number) => smax(ellipse(x, z, aOf(y), bOf(y)), y - ytop(x), 3);
 
   // Manches : cônes elliptiques, plus écartés pour un T-shirt, plus près du corps pour les manches longues.
-  const th = (long ? 27 : 47) * (Math.PI / 180);
+  const th = (long ? 21 : 43) * (Math.PI / 180);
   const r0 = (g.circ / (2 * Math.PI)) * 1.08, r1 = (g.cuff / (2 * Math.PI)) * 1.04;
   const rMid = g.rib ? Math.max(r1 * 1.5, r0 * 0.78) : r1;
   const rOf = (t: number) => {
-    if (!g.rib) return r0 + (r1 - r0) * clamp(t / g.L, 0, 1);
+    // Départ adouci (pas de cassure là où la manche entre dans le buste).
+    const ease = (u: number) => (u <= 0 ? 0 : u < 0.15 ? (u * u) / 0.3 : u - 0.075) / 0.925;
+    if (!g.rib) return r0 + (r1 - r0) * Math.min(1, ease(t / g.L));
     const k = g.L - 7;
-    return t < k ? r0 + (rMid - r0) * clamp(t / k, 0, 1) : rMid + (r1 - rMid) * smooth(k, g.L - 4, t);
+    return t < k ? r0 + (rMid - r0) * Math.min(1, ease(t / k)) : rMid + (r1 - rMid) * smooth(k, g.L - 4, t);
   };
   // Départ de manche : sa ligne du dessus prolonge la pente d'épaule (pas de bosse au-dessus de l'épaule).
   const sleeves = [1, -1].map((s) => ({
@@ -81,9 +85,9 @@ export function mockupShape(g: Garment) {
   };
   const sleeve = (sl: (typeof sleeves)[number], x: number, y: number, z: number) => {
     const { t, ru, rw } = sleeveLocal(sl, x, y, z);
-    const tc = clamp(t, -8, g.L + 4), r = rOf(tc);
-    const d = ellipse(ru, rw, r, r * 0.62), e = t - tc;
-    return e ? Math.hypot(Math.max(d, 0), e) : d;
+    // Tube limité en douceur aux deux bouts : court dans le buste (il ne ressort pas au-dessus de l'épaule).
+    const r = rOf(Math.min(t, g.L + 4));
+    return smax(smax(ellipse(ru, rw, r, r * 0.62), -(t + 2.5), 4), t - (g.L + 4), 2);
   };
 
   // Capuche posée dans le dos et col qui en part (hoodie).
@@ -116,17 +120,31 @@ export function mockupShape(g: Garment) {
   };
 
   /** Plis dans la forme (cm) : tombants en bas, de suspension sous les épaules, en anneaux aux manches. */
+  const armY = yT - 6.5 - r0 * 1.5; // hauteur de l'aisselle
   const folds = (x: number, y: number, z: number) => {
-    const t = (yT - y) / g.H, ang = Math.atan2(x / a0, z / b0);
-    let f = 0.42 * smooth(0.3, 1, t) * Math.sin(ang * 7 + 1.4 * Math.sin(y * 0.09) + 0.7) * (1 - 0.5 * smooth(0.92, 1, t));
-    f += 0.16 * smooth(0.1, 0.17, t) * (1 - smooth(0.24, 0.4, t)) * Math.sin((Math.abs(x) * 0.8 + (yT - y) * 0.6) * 0.7) * smooth(nw, nw + 5, Math.abs(x)) * (z > 0 ? 1 : 0.6);
-    f += 0.18 * smooth(0.85, 1, t) * Math.sin(ang * 5 + 2.1);
-    for (const sl of sleeves) {
-      const { t: ts, ru } = sleeveLocal(sl, x, y, z);
-      // Plis en anneaux : surtout sous le bras, presque rien sur le dessus de l'épaule.
-      const under = 0.15 + 0.85 * smooth(1, -4, ru) * smooth(0, 3, ts);
-      if (ts > -2 && ts < g.L && x * sl.s > aTop * 0.6) f += 0.32 * under * Math.exp(-Math.max(0, ts) / (long ? 14 : 7)) * Math.sin(ts * 1.05 + Math.atan2(z, 4) * 1.5);
-      if (long && ts > g.L * 0.45 && ts < g.L - 6 && x * sl.s > aTop * 0.6) f += 0.28 * Math.sin(ts * 0.8 + z * 0.3) * smooth(g.L * 0.45, g.L * 0.6, ts);
+    const t = (yT - y) / g.H, ax = Math.abs(x), back = z > 0 ? 1 : 0.7;
+    // Tombé : quelques grands plis verticaux irréguliers, qui s'ouvrent vers l'ourlet.
+    const warp = 1.6 * Math.sin(y * 0.045 + 0.8) + 0.9 * Math.sin(y * 0.11 + x * 0.05);
+    const drape = 0.6 * Math.sin(x * 0.34 + warp) + 0.5 * Math.sin(x * 0.17 - warp * 0.7 + 2);
+    let f = 0.5 * smooth(0.3, 0.95, t) * drape * back;
+    // Tension : plis qui rayonnent depuis chaque aisselle vers le milieu du buste.
+    const dx = aOf(y) - ax, dy = armY - y, rad = Math.hypot(dx, dy * 0.8);
+    // (multiple entier de l'angle et enveloppes lisses : aucune rupture dans la surface)
+    f += 0.5 * smooth(7, 16, rad) * Math.exp(-rad / 16) * smooth(-8, 3, dy) * Math.sin(Math.atan2(dy + 2, dx + 1) * 4 + 0.9) * back;
+    // Plis des manches : seulement hors du buste (masque progressif, aucune coupure), angles en multiples
+    // entiers (pas de saut au raccord de l'angle).
+    const onSleeve = smooth(-0.5, 2.5, torso(x, y, z));
+    if (onSleeve > 0) for (const sl of sleeves) {
+      if (x * sl.s <= 0) continue;
+      const { t: ts, ru, rw } = sleeveLocal(sl, x, y, z);
+      const ph = Math.atan2(rw, ru), w = onSleeve * smooth(0, 4, ts) * (1 - smooth(g.L - 3, g.L, ts));
+      if (long) {
+        // Coude : plis de compression en biais ; au-dessus du poignet : fronces du tissu retenu par la côte.
+        f += w * 0.42 * smooth(g.L * 0.3, g.L * 0.45, ts) * (1 - smooth(g.L * 0.68, g.L * 0.82, ts)) * Math.sin(ts * 0.52 + ph + sl.s);
+        f += w * 0.3 * smooth(g.L - 15, g.L - 9, ts) * (1 - smooth(g.L - 7, g.L - 5, ts)) * Math.sin(ph * 6 + ts * 0.25);
+      } else {
+        f += w * 0.18 * smooth(2, 8, ts) * Math.sin(ts * 0.6 + ph * 2 + sl.s);
+      }
     }
     return f;
   };
@@ -143,7 +161,9 @@ export function mockupShape(g: Garment) {
   const nzc = bTop + 3;
   const cuts = (x: number, y: number, z: number): number[] => {
     const inNeck = (x / nw) ** 2 + (z / nzc) ** 2 < 1;
-    const out = [inNeck ? yrim(x, z) - y : 1, y - yH];
+    // Le col d'un hoodie fait partie de la capuche : il n'est pas entaillé par la découpe d'encolure.
+    const neck = inNeck ? yrim(x, z) - y : 1;
+    const out = [g.hood && neck < 0 ? Math.max(neck, torso(x, y, z) - hood(x, y, z)) : neck, y - yH];
     // Poignet : seulement sur la manche (le bas du buste est aussi « loin » sur l'axe de la manche).
     const dt = torso(x, y, z);
     for (const sl of sleeves) out.push(x * sl.s > aTop * 0.5 && sleeve(sl, x, y, z) < dt + 1 ? g.L - sleeveLocal(sl, x, y, z).t : 1);
@@ -166,7 +186,12 @@ export function mockupShape(g: Garment) {
   /** Coutures : valeur > 0 du côté de la manche gauche, de la manche droite, de la capuche (sinon buste). */
   const seams = (x: number, y: number, z: number): number[] => {
     const dt = torso(x, y, z);
-    return [...sleeves.map((sl) => dt - sleeve(sl, x, y, z) - 0.6), g.hood ? dt - hood(x, y, z) + 0.4 : -1];
+    // Emmanchure : plan en travers de la manche à son départ (couture nette), limité au voisinage de la manche.
+    // … et à sa section : la poitrine sous l'aisselle, hors du tube de la manche, reste au buste.
+    return [...sleeves.map((sl) => {
+      const q = sleeveLocal(sl, x, y, z);
+      return Math.min(q.t, dt - sleeve(sl, x, y, z) + 1, x * sl.s - aTop * 0.5, q.ru + rOf(Math.max(0, q.t)) * 1.12);
+    }), g.hood ? dt - hood(x, y, z) + 0.4 : -1];
   };
   const PARTS = ["sleeveL", "sleeveR", "hood"] as const;
   const atlasOf = (layout: Layout, which: "torso" | "sleeveL" | "sleeveR" | "hood", x: number, y: number, z: number): [number, number] => {
@@ -237,18 +262,28 @@ export function buildMockup(g: Garment, layout: Layout, h = 0.7): Mockup {
     nrm[v * 3] = gx; nrm[v * 3 + 1] = gy; nrm[v * 3 + 2] = gz;
   }
 
+  // Ombre des creux : on avance le long de la normale ; si le tissu reste proche, le point est encaissé.
+  const occ = new Float32Array(nv), HS = [0.7, 1.6, 3.2, 5.5, 9], WS = [0.3, 0.25, 0.2, 0.15, 0.1];
+  for (let v = 0; v < nv; v++) {
+    const x = verts[v * 3], y = verts[v * 3 + 1], z = verts[v * 3 + 2];
+    let o = 0;
+    for (let i = 0; i < 5; i++) { const hh = HS[i]; o += WS[i] * clamp((hh - sh.sdf(x + nrm[v * 3] * hh, y + nrm[v * 3 + 1] * hh, z + nrm[v * 3 + 2] * hh)) / hh, 0, 1); }
+    occ[v] = clamp(1 - 1.5 * o, 0.12, 1);
+  }
+
   // Découpe des triangles (bords nets), dépliage sur l'atlas, triangles indépendants.
-  const P: number[] = [], N: number[] = [], U: number[] = [];
-  type Pt = { p: V3; n: V3; c: number[]; s: number[] };
+  const P: number[] = [], N: number[] = [], U: number[] = [], O: number[] = [];
+  type Pt = { p: V3; n: V3; c: number[]; s: number[]; o: number };
   const mk = (v: number): Pt => {
     const p: V3 = [verts[v * 3], verts[v * 3 + 1], verts[v * 3 + 2]];
-    return { p, n: [nrm[v * 3], nrm[v * 3 + 1], nrm[v * 3 + 2]], c: sh.cuts(...p), s: sh.seams(...p) };
+    return { p, n: [nrm[v * 3], nrm[v * 3 + 1], nrm[v * 3 + 2]], c: sh.cuts(...p), s: sh.seams(...p), o: occ[v] };
   };
   const lerp = (a: Pt, b: Pt, t: number): Pt => ({
     p: [a.p[0] + (b.p[0] - a.p[0]) * t, a.p[1] + (b.p[1] - a.p[1]) * t, a.p[2] + (b.p[2] - a.p[2]) * t],
     n: [a.n[0] + (b.n[0] - a.n[0]) * t, a.n[1] + (b.n[1] - a.n[1]) * t, a.n[2] + (b.n[2] - a.n[2]) * t],
     c: a.c.map((v, i) => v + (b.c[i] - v) * t),
     s: a.s.map((v, i) => v + (b.s[i] - v) * t),
+    o: a.o + (b.o - a.o) * t,
   });
   /** Coupe un polygone selon le signe de f : [partie f ≥ 0, partie f < 0]. */
   const split = (poly: Pt[], f: (q: Pt) => number): [Pt[], Pt[]] => {
@@ -294,7 +329,7 @@ export function buildMockup(g: Garment, layout: Layout, h = 0.7): Mockup {
     }
     for (let i = 1; i < poly.length - 1; i++) for (const k of [0, i, i + 1]) {
       const q = poly[k], l = Math.hypot(...q.n) || 1;
-      P.push(...q.p); N.push(q.n[0] / l, q.n[1] / l, q.n[2] / l);
+      P.push(...q.p); N.push(q.n[0] / l, q.n[1] / l, q.n[2] / l); O.push(q.o);
       U.push(uvs[k][0] / layout.width, 1 - uvs[k][1] / layout.height);
     }
   }
@@ -311,5 +346,5 @@ export function buildMockup(g: Garment, layout: Layout, h = 0.7): Mockup {
       cords.push(line);
     }
   }
-  return { position: new Float32Array(P), normal: new Float32Array(N), uv: new Float32Array(U), cords, top: sh.yT, shoulder: sh.aTop, triangles: P.length / 9 };
+  return { position: new Float32Array(P), normal: new Float32Array(N), uv: new Float32Array(U), ao: new Float32Array(O), cords, top: sh.yT, shoulder: sh.aTop, triangles: P.length / 9 };
 }

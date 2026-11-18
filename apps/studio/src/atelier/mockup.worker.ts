@@ -5,5 +5,5 @@ import type { Garment, Layout } from "./garments.js";
 self.onmessage = (ev: MessageEvent<{ id: number; g: Garment; layout: Layout }>) => {
   const { id, g, layout } = ev.data;
   const m = buildMockup(g, layout);
-  (self as unknown as Worker).postMessage({ id, m }, [m.position.buffer, m.normal.buffer, m.uv.buffer]);
+  (self as unknown as Worker).postMessage({ id, m }, [m.position.buffer, m.normal.buffer, m.uv.buffer, m.ao.buffer]);
 };
