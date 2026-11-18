@@ -10,7 +10,7 @@ import { atlasToPiece, type Garment, type Layout, type PieceId, PX_PER_CM as S }
 
 export type CameraView = "front" | "side" | "back";
 /** Maquette sculptée (rendu photo, défaut) ou simulation du tissu (drapé interactif). */
-export type GarmentModel = "mockup" | "sim";
+export type GarmentModel = "mockup" | "sim" | "import";
 export type LightPreset = "studio" | "soft" | "contrast";
 export type Fabric = "cotton" | "fleece" | "jersey";
 /** Matières : rugosité, relief du tricot, reflet velouté (sheen) propre aux tissus. */
@@ -172,7 +172,7 @@ export class GarmentScene {
     for (const m of [...this.meshes, ...this.cordMeshes, ...this.extra]) { this.scene.remove(m); m.geometry.dispose(); }
     this.meshes = []; this.cordMeshes = []; this.extra = [];
     this.filler.visible = this.model === "sim";
-    if (this.model === "mockup") { this.buildMockupMesh(g, layout); this.texVersion = -1; return; }
+    if (this.model !== "sim") { this.buildMockupMesh(g, layout); this.texVersion = -1; return; }
     const W = layout.width * S, H = layout.height * S;
     const T = this.sim.torso;
     this.meshes.push(this.grid(T.cols, T.rows, (k, j) => T.idx[j * T.cols + k], (k, j) => [(k / T.cols) * (2 * g.W * S) / W, 1 - (T.vcm[j * T.cols + (k % T.cols)] * S) / H]));
@@ -231,7 +231,9 @@ export class GarmentScene {
 
   /** Maquette sculptée : maillage calculé une fois par vêtement (gardé en mémoire), immobile. */
   private buildMockupMesh(g: Garment, layout: Layout) {
-    const m = this.mockCache.get(g.id);
+    // Modèle importé : déjà ajusté par la page ; sinon maquette sculptée du vêtement.
+    const m = this.model === "import" ? this.imported : this.mockCache.get(g.id);
+    if (!m && this.model === "import") return;
     if (!m) {
       this.onBusy?.(true);
       void this.requestMockup(g, layout).then((built) => {
@@ -274,6 +276,13 @@ export class GarmentScene {
     const attr = mesh.geometry.attributes.color as THREE.BufferAttribute, arr = attr.array as Float32Array, k = Math.min(1, this.wrinkles * 1.5);
     for (let i = 0; i < ao.length; i++) { const v = 1 - k * (1 - ao[i]); arr[i * 3] = v; arr[i * 3 + 1] = v; arr[i * 3 + 2] = v; }
     attr.needsUpdate = true;
+  }
+
+  private imported: Mockup | null = null;
+  /** Modèle 3D importé, déjà ajusté au vêtement (voir importModel.ts) ; null pour le retirer. */
+  setImported(m: Mockup | null) {
+    this.imported = m;
+    if (this.model === "import" && this.g) this.setGarment(this.g, this.layout);
   }
 
   setCordColor(hex: string) { this.cordMat.color.set(hex); }
@@ -569,7 +578,7 @@ export class GarmentScene {
       const fps = Math.round((this.statsAcc.frames * 1000) / (now - this.statsAcc.t0));
       this.statsAcc.frames = 0; this.statsAcc.t0 = now;
       if (this.model === "sim") this.onStats?.({ nodes: this.sim.n, constraints: this.sim.ca.length, solverMs: this.statsAcc.solver, fps });
-      else this.onStats?.({ nodes: this.mockCache.get(this.g.id)?.triangles ?? 0, constraints: 0, solverMs: 0, fps });
+      else this.onStats?.({ nodes: (this.model === "import" ? this.imported : this.mockCache.get(this.g.id))?.triangles ?? 0, constraints: 0, solverMs: 0, fps });
     }
   }
 

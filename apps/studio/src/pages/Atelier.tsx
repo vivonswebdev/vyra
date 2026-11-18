@@ -18,6 +18,8 @@ import { Atlas, FONTS, fontOf, pickLayer, type AtelierLayer, type EmbroideryArt,
 import { clampToSheet, pieceToSheet, sheetExtent, sheetToPiece } from "../atelier/sheet.js";
 import { AUTO_INK_DARK, autoInk, clampToPiece, GARMENTS, layoutFor, PIECES, type Garment, type GarmentId, type Layout, type PieceId } from "../atelier/garments.js";
 import { PatternView, type LayerPatch, type Unit } from "../atelier/pattern2d.js";
+import { fitImported, ModelImportError, parseModelFile, type RawModel } from "../atelier/importModel.js";
+import { deleteModel, loadModel, saveModel } from "../atelier/modelStore.js";
 import { GarmentScene, type CameraView, type Fabric, type GarmentModel, type LightPreset, type SceneStats } from "../atelier/scene.js";
 
 const COLORWAYS: { id: string; hex: string }[] = [
@@ -135,8 +137,8 @@ const BACKDROPS: { id: string; hex: string }[] = [
   { id: "sky", hex: "#b7c7d6" }, { id: "white", hex: "#efeee9" }, { id: "charcoal", hex: "#3a3734" },
 ];
 type ViewMode = "pattern" | "split" | "3d";
-interface SceneSaved { backdrop: string; leaves: boolean; light: LightPreset; hanger: boolean; material: Fabric; relief: number; wrinkles: number; unit: Unit; model: GarmentModel }
-const SCENE_DEFAULT: SceneSaved = { backdrop: BACKDROPS[0].hex, leaves: true, light: "studio", hanger: true, material: "cotton", relief: 1, wrinkles: 0.6, unit: "cm", model: "mockup" };
+interface SceneSaved { backdrop: string; leaves: boolean; light: LightPreset; hanger: boolean; material: Fabric; relief: number; wrinkles: number; unit: Unit; model: GarmentModel; importFlip: boolean }
+const SCENE_DEFAULT: SceneSaved = { backdrop: BACKDROPS[0].hex, leaves: true, light: "studio", hanger: true, material: "cotton", relief: 1, wrinkles: 0.6, unit: "cm", model: "mockup", importFlip: false };
 const UNIT_K: Record<Unit, number> = { mm: 10, cm: 1, in: 1 / 2.54 };
 
 const ICON = {
@@ -239,6 +241,9 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
   const [stats, setStats] = useState<SceneStats | null>(null);
   const [noWebgl, setNoWebgl] = useState(false);
   const [building, setBuilding] = useState(false);
+  // Modèle 3D importé (forme brute) : gardé dans ce navigateur, relu à l'ouverture de la page.
+  const [rawModel, setRawModel] = useState<{ name: string; raw: RawModel } | null>(null);
+  const modelInput = useRef<HTMLInputElement>(null);
   const [fontsTick, setFontsTick] = useState(0);
 
   const c3d = useRef<HTMLCanvasElement>(null);
@@ -330,7 +335,7 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
     const s = scene.current;
     if (!s) return;
     // Maquette immobile : glisser sur une impression la déplace, ailleurs la vue tourne.
-    s.mode = sc.model === "mockup" ? "move" : mode; s.turntable = turntable; s.breeze = breeze;
+    s.mode = sc.model !== "sim" ? "move" : mode; s.turntable = turntable; s.breeze = breeze;
     s.setCordColor(render === "blueprint" ? "#e6ebf2" : colorway);
     s.setGarmentColor(render === "blueprint" ? "#fbfcfd" : colorway);
     s.setRelief(printType === "puff");
@@ -345,6 +350,41 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
     s.setHanger(sc.hanger);
     s.setFabric(sc.material, sc.relief, sc.wrinkles);
   }, [sc]);
+
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const st = await loadModel(project.id);
+      const raw = st ? await parseModelFile(st.name, st.data).catch(() => null) : null;
+      if (!alive) return;
+      if (st && raw) setRawModel({ name: st.name, raw });
+      // Mise en scène « importé » sans modèle retrouvé (autre navigateur, stockage vidé) : retour à la maquette.
+      else setSc((s) => (s.model === "import" ? { ...s, model: "mockup" } : s));
+    })();
+    return () => { alive = false; };
+  }, [project.id]);
+  const fitted = useMemo(() => {
+    if (!rawModel) return null;
+    try { return fitImported(rawModel.raw, garment, layout, sc.importFlip); } catch { return null; }
+  }, [rawModel, garment, layout, sc.importFlip]);
+  useEffect(() => { scene.current?.setImported(fitted); }, [fitted]);
+  const importModel = async (file: File) => {
+    setBuilding(true);
+    try {
+      const data = await file.arrayBuffer();
+      const raw = await parseModelFile(file.name, data);
+      fitImported(raw, garment, layout); // refuse tout de suite un modèle inutilisable
+      await saveModel(project.id, { name: file.name.slice(0, 80), data });
+      setRawModel({ name: file.name.slice(0, 80), raw });
+      setScene({ model: "import" });
+      toast(t("at.im.done"));
+    } catch (e) {
+      toast(t("at.im.err." + (e instanceof ModelImportError ? e.code : "parse")));
+    } finally {
+      setBuilding(false);
+    }
+  };
+  const removeModel = () => { void deleteModel(project.id); setRawModel(null); setScene({ model: "mockup" }); };
 
   // Images des calques : décodées une fois (y compris celles gardées dans ce navigateur), puis texture redessinée.
   useEffect(() => {
@@ -367,7 +407,7 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
   // Texture et patron : redessinés à chaque changement.
   useEffect(() => {
     atlas.render({
-      garment, layout, render, colorway, printType, layers, embroidery: art, images, wrinkles: sc.model === "mockup" ? 0 : sc.wrinkles,
+      garment, layout, render, colorway, printType, layers, embroidery: art, images, wrinkles: sc.model !== "sim" ? 0 : sc.wrinkles,
       labels: { front: t("at.sheetFront", { fabric: fabric.toUpperCase() }), back: t("at.sheetBack", { fabric: fabric.toUpperCase() }) },
     });
     const pv = pattern.current;
@@ -538,8 +578,8 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
                     </>
                   )}
                 </div>
-                {stats && <p className="at-stats num">{sc.model === "mockup"
-                  ? t("at.statsMock", { n: stats.nodes.toLocaleString(lang), fps: stats.fps })
+                {stats && <p className="at-stats num">{sc.model !== "sim"
+                  ? t(sc.model === "import" ? "at.statsImport" : "at.statsMock", { n: stats.nodes.toLocaleString(lang), fps: stats.fps })
                   : t("at.stats", { n: stats.nodes.toLocaleString(lang), c: stats.constraints.toLocaleString(lang), ms: fmt(stats.solverMs), fps: stats.fps })}</p>}
               </>
             )}
@@ -662,8 +702,21 @@ function AtelierView({ project, t, lang, toast }: { project: ProjectDTO; t: Retu
                 <Segmented label={t("at.render")} value={render} onChange={setRender} options={[{ id: "fabric", label: t("at.r.fabric") }, { id: "blueprint", label: t("at.r.blueprint") }]} />
               </Section>
               <Section title={t("at.appearance")}>
-                <Segmented label={t("at.model")} value={sc.model} onChange={(v) => setScene({ model: v })} options={[{ id: "mockup", label: t("at.mo.mockup") }, { id: "sim", label: t("at.mo.sim") }]} />
-                <p className="small muted">{t(sc.model === "mockup" ? "at.mo.mockupNote" : "at.mo.simNote")}</p>
+                <Segmented label={t("at.model")} value={sc.model} onChange={(v) => setScene({ model: v })}
+                  options={[{ id: "mockup", label: t("at.mo.mockup") }, { id: "sim", label: t("at.mo.sim") }, ...(rawModel ? [{ id: "import" as GarmentModel, label: t("at.mo.import") }] : [])]} />
+                <p className="small muted">{t(sc.model === "mockup" ? "at.mo.mockupNote" : sc.model === "sim" ? "at.mo.simNote" : "at.mo.importNote")}</p>
+                <input ref={modelInput} type="file" accept=".glb,.obj,model/gltf-binary" hidden data-testid="at-model-file"
+                  onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void importModel(f); }} />
+                <div className="at-row2">
+                  <button type="button" className="at-btn sm" onClick={() => modelInput.current?.click()} data-testid="at-model-import">{t(rawModel ? "at.im.replace" : "at.im.button")}</button>
+                  {rawModel && <button type="button" className="at-btn sm danger" onClick={removeModel} data-testid="at-model-remove">{t("at.im.remove")}</button>}
+                </div>
+                {rawModel ? (
+                  <>
+                    <p className="small num" data-testid="at-model-info">{rawModel.name} · {t("at.im.tris", { n: (rawModel.raw.position.length / 9).toLocaleString(lang) })}</p>
+                    <Toggle id="at-model-flip" label={t("at.im.flip")} checked={sc.importFlip} onChange={(v) => setScene({ importFlip: v })} />
+                  </>
+                ) : <p className="small muted">{t("at.im.hint")}</p>}
                 <label className="at-select">
                   <span>{t("at.material")}</span>
                   <select value={sc.material} onChange={(e) => setScene({ material: e.target.value as Fabric })}>

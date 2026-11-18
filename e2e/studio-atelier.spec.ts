@@ -157,3 +157,46 @@ test("atelier : espace de travail (unités du patron, scène photo, annuler, pho
   expect(download.suggestedFilename()).toMatch(/-tee-3d\.png$/);
   expect(errors).toEqual([]);
 });
+
+test("atelier : import d'un modèle 3D externe (.obj), gardé dans le navigateur, puis retiré", async ({ page }) => {
+  const errors = trackErrors(page);
+  await signupApi(page);
+  await page.goto("/studio/");
+  await page.getByTestId("new-design").click();
+  await page.getByTestId("demo-02-fleur").click();
+  await page.waitForURL(/\/studio\/p\//);
+  await waitSaved(page);
+  const id = page.url().split("/p/")[1];
+  await page.goto(`/studio/p/${id}/atelier`);
+  await expect(page.getByTestId("atelier")).toBeVisible();
+  await expect.poll(() => sample(page, "at-3d")).toBeGreaterThan(0);
+
+  // Un fichier qui n'est pas un modèle est refusé, sans rien changer.
+  await page.getByTestId("at-model-file").setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("pas un modèle") });
+  await expect(page.getByText("Fichier refusé : il faut un .glb ou un .obj.")).toBeVisible();
+  await expect(page.getByTestId("at-model-info")).toHaveCount(0);
+
+  // Un vêtement très simple en .obj (mètres) : un corps et deux manches.
+  const quad = (x0: number, x1: number, y0: number, y1: number, z: number, base: number) =>
+    `v ${x0} ${y0} ${z}\nv ${x1} ${y0} ${z}\nv ${x1} ${y1} ${z}\nv ${x0} ${y1} ${z}\nf ${base} ${base + 1} ${base + 2}\nf ${base} ${base + 2} ${base + 3}\n`;
+  const obj = quad(-0.25, 0.25, 0, 0.7, 0.1, 1) + quad(-0.25, 0.25, 0, 0.7, -0.1, 5) + quad(0.25, 0.5, 0.5, 0.7, 0.05, 9) + quad(-0.5, -0.25, 0.5, 0.7, 0.05, 13);
+  const before = await sample(page, "at-3d");
+  await page.getByTestId("at-model-file").setInputFiles({ name: "vetement.obj", mimeType: "model/obj", buffer: Buffer.from(obj) });
+  await expect(page.getByTestId("at-model-info")).toContainText("vetement.obj · 8 triangles");
+  await expect(page.getByRole("group", { name: "Modèle 3D" }).getByRole("button", { name: "Importé" })).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => sample(page, "at-3d")).not.toBe(before);
+
+  // Gardé dans ce navigateur : toujours là après rechargement.
+  await page.reload();
+  await expect(page.getByTestId("at-model-info")).toContainText("vetement.obj");
+  await expect(page.getByRole("group", { name: "Modèle 3D" }).getByRole("button", { name: "Importé" })).toHaveAttribute("aria-pressed", "true");
+
+  // Retiré : retour à la maquette, et il ne revient pas.
+  await page.getByTestId("at-model-remove").click();
+  await expect(page.getByTestId("at-model-info")).toHaveCount(0);
+  await expect(page.getByRole("group", { name: "Modèle 3D" }).getByRole("button", { name: "Maquette" })).toHaveAttribute("aria-pressed", "true");
+  await page.reload();
+  await expect(page.getByTestId("atelier")).toBeVisible();
+  await expect(page.getByTestId("at-model-info")).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
